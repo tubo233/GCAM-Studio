@@ -1,6 +1,6 @@
 {
   "name": "gcam-china-studio",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "GCAM-China Studio - scenario and data workbench for GCAM-China v8",
   "main": "desktop/main.js",
@@ -9,7 +9,7 @@
     "dev:api": "runtime\\venv\\Scripts\\python.exe -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8765 --reload",
     "dev:electron": "cross-env GCAM_STUDIO_DEV=1 electron .",
     "dev": "concurrently -k -n API,WEB,APP -c blue,green,magenta \"npm:dev:api\" \"npm:dev:web\" \"wait-on tcp:8765 tcp:5173 && npm:dev:electron\"",
-    "build:web": "tsc --noEmit -p frontend/tsconfig.json && vite build --config frontend/vite.config.ts",
+    "build:web": "node node_modules/typescript/bin/tsc --noEmit -p frontend/tsconfig.json && node node_modules/vite/bin/vite.js build --config frontend/vite.config.ts",
     "build:backend": "runtime\\venv\\Scripts\\pyinstaller.exe --noconfirm --distpath build/backend-dist --workpath build/pyinstaller-work build/backend.spec",
     "build:desktop": "electron-builder --win",
     "build": "npm run build:web && npm run build:backend && npm run build:desktop",

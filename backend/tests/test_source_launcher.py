@@ -3,6 +3,9 @@ from __future__ import annotations
 import sys
 import os
 import subprocess
+import json
+import hashlib
+import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -38,6 +41,52 @@ def test_bundled_web_skips_node_and_invalidates_on_source_or_asset_change(source
     assert launcher.web_ready(source)
     (source / 'frontend/dist/assets/app.js').write_text('corrupt')
     assert not launcher.web_ready(source)
+
+
+def test_line_endings_do_not_rebuild_bundled_web(source, monkeypatch):
+    script = source / 'frontend/src/main.tsx'
+    script.write_bytes(b'export const value = 1;\n')
+    launcher.stamp_web(source)
+    script.write_bytes(b'export const value = 1;\r\n')
+    monkeypatch.setattr(launcher.shutil, 'which', lambda _: pytest.fail('Only line endings changed; Node is not needed'))
+    launcher.prepare_web(source)
+    assert launcher.web_ready(source)
+
+
+def test_missing_vite_is_reinstalled_even_when_tsc_and_lock_marker_exist(source, monkeypatch):
+    (source / 'node_modules/typescript/bin').mkdir(parents=True)
+    (source / 'node_modules/typescript/bin/tsc').write_text('compiler exists')
+    marker = source / 'node_modules/.studio-lock-sha256'
+    marker.write_text(hashlib.sha256((source / 'package-lock.json').read_bytes()).hexdigest())
+    monkeypatch.setattr(launcher, 'web_ready', lambda _: False)
+    monkeypatch.setattr(launcher.shutil, 'which', lambda name: name)
+    monkeypatch.setattr(launcher.subprocess, 'check_output', lambda *a, **kw: 'v22.12.0')
+    probes = iter([False, True])
+    monkeypatch.setattr(launcher, 'usable_web_dependencies', lambda *a: next(probes))
+    downloads, builds = [], []
+    monkeypatch.setattr(launcher, 'download', lambda command, **kw: downloads.append((command, kw)))
+    monkeypatch.setattr(launcher.subprocess, 'run', lambda command, **kw: builds.append(command) or SimpleNamespace(returncode=0))
+    launcher.prepare_web(source)
+    assert len(downloads) == 1
+    assert '--bin-links=true' in downloads[0][0] and '--include=dev' in downloads[0][0]
+    assert downloads[0][1]['env']['ELECTRON_SKIP_BINARY_DOWNLOAD'] == '1'
+    assert builds == [['npm.cmd', 'run', 'build:web']]
+
+
+def test_build_script_runs_without_npm_bin_command_shims(tmp_path):
+    npm = shutil.which('npm.cmd' if os.name == 'nt' else 'npm')
+    if not npm or not shutil.which('node'):
+        pytest.skip('Node/npm are needed for this CLI portability regression')
+    script = json.loads((TOOLS.parent / 'package.json').read_text())['scripts']['build:web']
+    (tmp_path / 'package.json').write_text(json.dumps({'scripts': {'build:web': script}}))
+    for relative, marker in [('typescript/bin/tsc', 'compiler called'), ('vite/bin/vite.js', 'vite called')]:
+        entry = tmp_path / 'node_modules' / relative
+        entry.parent.mkdir(parents=True)
+        entry.write_text(f'console.log({json.dumps(marker)})')
+    assert not (tmp_path / 'node_modules/.bin').exists()
+    result = subprocess.run([npm, 'run', 'build:web'], cwd=tmp_path, capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=20)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'compiler called' in result.stdout and 'vite called' in result.stdout
 
 
 def test_download_falls_back_only_after_three_proxy_failures(tmp_path, monkeypatch):

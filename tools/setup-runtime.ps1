@@ -35,7 +35,7 @@ function Invoke-Download([string]$Program, [string[]]$Arguments) {
 if ($LASTEXITCODE -ne 0) { throw 'Python 3.11 or newer is required.' }
 $venvPython = Join-Path $studioRoot 'runtime/venv/Scripts/python.exe'
 Invoke-Download $venvPython @('-m','pip','install','--retries','0','--timeout','20','-r','backend/requirements-dev.txt')
-if (-not $SkipNode) { Invoke-Download 'npm.cmd' @('ci','--fetch-retries=0','--fetch-timeout=20000') }
+if (-not $SkipNode) { Invoke-Download 'npm.cmd' @('ci','--include=dev','--bin-links=true','--fetch-retries=0','--fetch-timeout=20000') }
 if (-not $SkipR) {
     $rCode = 'dir.create("runtime/r-lib",recursive=TRUE,showWarnings=FALSE); install.packages(c("assertthat","dplyr","tidyr","readr","data.table","stringr","pkgload","xml2"),lib="runtime/r-lib",repos="https://cloud.r-project.org",type="binary")'
     Invoke-Download $Rscript @('--vanilla','-e',$rCode)

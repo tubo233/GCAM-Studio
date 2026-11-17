@@ -1,14 +1,16 @@
 # GCAM-China Studio
 
-GCAM-China v8 的情景与数据工作台：编辑 CSV → 用 R 生成 XML → 调用 GCAM 求解 → 查询与导出结果。当前版本 **0.1.1**。
+GCAM-China v8 的情景与数据工作台：编辑 CSV → 用 R 生成 XML → 调用 GCAM 求解 → 查询与导出结果。当前版本 **0.1.2**。
 
 ## 解压覆盖更新
 
-给同事使用 `GCAM-China-Studio-0.1.1-source.zip`。退出旧的启动窗口，把压缩包中的 `GCAM-Studio` 内容解压到原来的同名目录，选择覆盖源码文件，然后双击唯一的 **启动.bat**。
+给同事使用 `GCAM-China-Studio-0.1.2-source.zip`。退出旧的启动窗口，把压缩包中的 `GCAM-Studio` 内容解压到原来的同名目录，选择覆盖源码文件，然后双击唯一的 **启动.bat**。
 
 更新包包含源码和与之匹配的网页文件，不包含 `data`、`runtime`、`node_modules`、模型数据、个人设置或 `release`。因此不会覆盖已有 Profile、CSV/XML 覆盖、历史结果、Python/R 环境和本机设置。更新前可以自行备份 `data`；不要先删除原目录。第一次运行新版入口会清理已知的旧版 `启动 GCAM Studio.bat` 和旧故障说明文件。
 
 `启动.bat` 直接运行 Python 源码服务并打开浏览器，默认地址为 **http://127.0.0.1:8765**，不调用 `release` 里的 exe，也不启动 Electron。保留启动窗口；按 Ctrl+C 停止。
+
+启动窗口第一行应显示 `[源码启动器] GCAM-China Studio 0.1.2`。若仍出现旧版“前端构建失败，请查看上面的 npm 输出”，请确认覆盖的是原目录中的 `启动.bat`，不要解压成多嵌套一层的目录。新版构建直接调用本地 TypeScript/Vite 文件，兼容复制依赖后缺少 `.bin/tsc.cmd` 的情况；LF/CRLF 换行变化不会触发无意义的重建。
 
 ## 首次运行需要什么
 

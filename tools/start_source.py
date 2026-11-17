@@ -138,7 +138,10 @@ def web_signature(root: Path) -> str:
     names += sorted(p.relative_to(root).as_posix() for p in (root / 'frontend/src').rglob('*') if p.is_file())
     digest = hashlib.sha256()
     for name in names:
-        digest.update(name.encode('utf-8') + b'\0' + (root / name).read_bytes() + b'\0')
+        content = (root / name).read_bytes()
+        if Path(name).suffix.lower() in {'.json', '.html', '.ts', '.tsx', '.js', '.jsx', '.css', '.scss', '.svg'}:
+            content = content.replace(b'\r\n', b'\n')
+        digest.update(name.encode('utf-8') + b'\0' + content + b'\0')
     return digest.hexdigest()
 
 
@@ -163,6 +166,19 @@ def web_ready(root: Path) -> bool:
         return False
 
 
+def usable_web_dependencies(root: Path, node: str) -> bool:
+    for relative in ('node_modules/typescript/bin/tsc', 'node_modules/vite/bin/vite.js'):
+        entry = root / relative
+        if not entry.is_file():
+            return False
+        try:
+            if subprocess.run([node, str(entry), '--version'], cwd=root, capture_output=True, timeout=20).returncode:
+                return False
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+    return True
+
+
 def prepare_web(root: Path) -> None:
     if web_ready(root):
         say('[前端] 使用与源码一致的网页文件，无需 Node.js 或 exe。')
@@ -176,15 +192,18 @@ def prepare_web(root: Path) -> None:
         raise RuntimeError(f'Node.js {version} 不支持当前前端，请安装 Node.js 20.19+ 或22.12+。')
     marker = root / 'node_modules/.studio-lock-sha256'
     lock = hashlib.sha256((root / 'package-lock.json').read_bytes()).hexdigest()
-    if not marker.is_file() and (root / 'node_modules/typescript/bin/tsc').is_file():
+    dependencies_ok = usable_web_dependencies(root, node)
+    if not marker.is_file() and dependencies_ok:
         installed = subprocess.run([npm, 'ls', '--depth=0'], cwd=root, capture_output=True)
         if installed.returncode == 0:
             marker.write_text(lock, encoding='ascii')
-    if not (root / 'node_modules/typescript/bin/tsc').is_file() or not marker.is_file() or marker.read_text().strip() != lock:
+    if not dependencies_ok or not marker.is_file() or marker.read_text().strip() != lock:
         env = os.environ.copy()
         # Running the source edition needs web dependencies, not Electron.exe.
         env['ELECTRON_SKIP_BINARY_DOWNLOAD'] = '1'
-        download([npm, 'ci', '--include=dev', '--fetch-retries=0', '--fetch-timeout=20000'], cwd=root, env=env)
+        download([npm, 'ci', '--include=dev', '--bin-links=true', '--fetch-retries=0', '--fetch-timeout=20000'], cwd=root, env=env)
+        if not usable_web_dependencies(root, node):
+            raise RuntimeError('前端依赖安装后仍无法加载 TypeScript 或 Vite，请检查上方安装输出。')
         marker.write_text(lock, encoding='ascii')
     say('[前端] 正在根据当前源码更新网页文件……')
     subprocess.run([npm, 'run', 'build:web'], cwd=root, check=True)
@@ -255,6 +274,8 @@ def main() -> int:
     os.environ['GCAM_STUDIO_HOME'] = str(ROOT)
     os.environ['GCAM_STUDIO_WEB_DIR'] = str(ROOT / 'frontend/dist')
     os.environ.setdefault('GCAM_STUDIO_DATA_DIR', str(ROOT / 'data'))
+    version = json.loads((ROOT / 'package.json').read_text(encoding='utf-8'))['version']
+    say(f'[源码启动器] GCAM-China Studio {version}')
     cleanup_legacy(ROOT)
     python = backend_python(ROOT)
     prepare_web(ROOT)
