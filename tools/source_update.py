@@ -118,7 +118,7 @@ def source_lock(root: Path):
                 fcntl.flock(stream, fcntl.LOCK_UN)
 
 
-def fetch(url: str, *, limit: int = 1024 * 1024, timeout: int = 4) -> bytes:
+def fetch(url: str, *, limit: int = 1024 * 1024, timeout: int = 15) -> bytes:
     def request(proxy):
         handler = urllib.request.ProxyHandler({'http': proxy, 'https': proxy} if proxy else {})
         opener = urllib.request.build_opener(handler)
