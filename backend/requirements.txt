@@ -1,0 +1,12 @@
+# Runtime dependencies of the backend. Used by the launcher to rebuild
+# runtime\venv-local on machines where the bundled runtime\venv cannot be used.
+# Lower bounds only (no exact pins): the colleague's Python may be newer than
+# 3.13 and mirrors such as Tsinghua lag behind PyPI, so exact versions fail.
+# Pure-Python or wheel-rich packages only - no compiler on target machines.
+fastapi>=0.115
+uvicorn>=0.30
+pydantic>=2.7
+python-multipart>=0.0.9
+pandas>=2.2
+lxml>=5.0
+openpyxl>=3.1

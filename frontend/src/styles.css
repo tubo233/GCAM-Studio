@@ -1,0 +1,86 @@
+body {
+  margin: 0;
+  background: #f5f7fa;
+}
+
+.ant-layout-sider-children {
+  display: flex;
+  flex-direction: column;
+}
+
+.page-title {
+  font-size: 20px;
+  font-weight: 700;
+  margin: 0 0 4px;
+}
+
+.page-sub {
+  color: #7a8699;
+  margin: 0 0 16px;
+  font-size: 13px;
+}
+
+.stat-card .ant-card-body {
+  padding: 18px 20px;
+}
+
+.stat-value {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.stat-label {
+  color: #7a8699;
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+.code-box {
+  background: #0f172a;
+  color: #d7e1f2;
+  border-radius: 8px;
+  padding: 12px;
+  font-family: Consolas, 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  overflow: auto;
+  max-height: 420px;
+  white-space: pre-wrap;
+}
+
+.split-list {
+  height: calc(100vh - 190px);
+  overflow: auto;
+  border-right: 1px solid #eee;
+}
+
+.file-row {
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.file-row:hover {
+  background: #f0f5ff;
+}
+
+.file-row.active {
+  background: #e6f0ff;
+  border-left: 3px solid #1668dc;
+}
+
+.muted {
+  color: #8c8c8c;
+  font-size: 12px;
+}
+
+.editable-cell {
+  cursor: text;
+  min-height: 22px;
+}
+
+.editable-cell:hover {
+  background: #fffbe6;
+  outline: 1px dashed #d9ad3c;
+}

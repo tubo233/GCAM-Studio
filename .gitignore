@@ -1,0 +1,14 @@
+node_modules/
+frontend/dist/
+runtime/
+release/
+build/backend-dist/
+build/pyinstaller-work/
+data/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.log
+*.zip
+.env
+.env.*
