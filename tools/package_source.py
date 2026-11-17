@@ -7,6 +7,7 @@ import zipfile
 from pathlib import Path
 
 from start_source import ROOT, prepare_web, web_ready
+from source_update import STATE, revision, snapshot
 
 
 def source_files(root: Path) -> list[Path]:
@@ -19,6 +20,7 @@ def source_files(root: Path) -> list[Path]:
                  'package.json', 'package-lock.json', 'README.md', '.gitignore', '.gitattributes', '启动.bat'):
         paths.add(root / name)
     paths.update(path for path in (root / 'frontend/dist').rglob('*') if path.is_file())
+    paths.update(root / name for name in ('distribution/web.zip', 'distribution/web.json') if (root / name).is_file())
     return sorted(paths)
 
 
@@ -31,6 +33,8 @@ def build_archive(root: Path, destination: Path) -> None:
     with zipfile.ZipFile(destination, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
         for path in paths:
             archive.write(path, 'GCAM-Studio/' + path.relative_to(root).as_posix())
+        names = [path.relative_to(root).as_posix() for path in paths]
+        archive.writestr('GCAM-Studio/' + STATE, json.dumps(snapshot(root, revision(root), names), ensure_ascii=False, indent=2))
     with zipfile.ZipFile(destination) as archive:
         bad = archive.testzip()
         if bad:

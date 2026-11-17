@@ -23,7 +23,7 @@ from .services.data_migrate import DataMigrateError, migrate_data_dir, same_data
 from .services.processes import JobCancelled
 from .services.diagnostics import tool_checks
 
-app = FastAPI(title="GCAM-China Studio API", version="0.1.2")
+app = FastAPI(title="GCAM-China Studio API", version="0.1.3")
 
 
 @app.exception_handler(ValueError)
@@ -62,7 +62,7 @@ def health(request: Request) -> dict[str, Any]:
     return _ok({
         **tool_checks(),
         "app": "GCAM-China Studio",
-        "version": "0.1.2",
+        "version": "0.1.3",
         "home": str(HOME),
         "gcam_root": str(PATHS.root),
         "gcam_root_exists": PATHS.gcam_exe.is_file() and PATHS.baseline_xml.is_dir(),

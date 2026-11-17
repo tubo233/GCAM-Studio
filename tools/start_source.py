@@ -17,6 +17,10 @@ import webbrowser
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+# Direct `python tools/start_source.py` starts with tools/ on sys.path.
+# Add the project root before loading the updater or backend packages.
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 PROXY = 'http://127.0.0.1:1080'
 _JOB_HANDLE = None  # Kept open until the launcher process exits; never inherited.
 R_PACKAGES = ('pkgload', 'dplyr', 'tidyr', 'readr', 'data.table', 'stringr', 'xml2', 'assertthat')
@@ -92,6 +96,12 @@ def download(command: list[str], *, cwd: Path, env: dict[str, str] | None = None
             args[index:index] = ['--proxy', proxy]
         elif Path(args[0]).name.lower() in ('npm', 'npm.cmd'):
             args += [f'--proxy={proxy}', f'--https-proxy={proxy}', '--noproxy=localhost,127.0.0.1']
+        elif Path(args[0]).stem.lower() == 'git':
+            args[1:1] = ['-c', 'http.proxy=' + proxy]
+            # The last -c wins: remove any older proxy override.
+            for index in range(len(args) - 1, 3, -1):
+                if args[index].startswith('http.proxy=') and args[index - 1] == '-c':
+                    del args[index - 1:index + 1]
         return args, env
 
     proxied_command, proxied = network_mode(PROXY)
@@ -265,10 +275,17 @@ def main() -> int:
     parser.add_argument('--port', type=int, default=int(os.environ.get('GCAM_STUDIO_PORT', '8765')))
     parser.add_argument('--no-browser', action='store_true', default=os.environ.get('GCAM_STUDIO_NO_BROWSER') == '1')
     parser.add_argument('--check', action='store_true')
+    parser.add_argument('--skip-update', action='store_true', default=os.environ.get('GCAM_STUDIO_SKIP_UPDATE') == '1')
     args = parser.parse_args()
     if not 1 <= args.port <= 65535:
         raise RuntimeError('端口必须为1–65535。')
     own_process_tree()
+    from tools.source_update import source_lock
+    with source_lock(ROOT):
+        return launch(args)
+
+
+def launch(args) -> int:
     os.chdir(ROOT)
     os.environ['PYTHONUTF8'] = '1'
     os.environ['GCAM_STUDIO_HOME'] = str(ROOT)
@@ -276,6 +293,18 @@ def main() -> int:
     os.environ.setdefault('GCAM_STUDIO_DATA_DIR', str(ROOT / 'data'))
     version = json.loads((ROOT / 'package.json').read_text(encoding='utf-8'))['version']
     say(f'[源码启动器] GCAM-China Studio {version}')
+    from tools.source_update import recover, check_updates
+    recover(ROOT)
+    if not args.skip_update and not args.check:
+        # Check before importing backend modules; the outer PowerShell restarts
+        # Python after a successful update so no old code remains in memory.
+        with socket.socket() as listener:
+            try:
+                listener.bind(('0.0.0.0', args.port))
+            except OSError as exc:
+                raise RuntimeError(f'端口 {args.port} 已被占用，请先关闭旧的启动窗口。') from exc
+        if check_updates(ROOT):
+            return 42
     cleanup_legacy(ROOT)
     python = backend_python(ROOT)
     prepare_web(ROOT)

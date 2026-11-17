@@ -79,6 +79,8 @@ def test_build_script_runs_without_npm_bin_command_shims(tmp_path):
         pytest.skip('Node/npm are needed for this CLI portability regression')
     script = json.loads((TOOLS.parent / 'package.json').read_text())['scripts']['build:web']
     (tmp_path / 'package.json').write_text(json.dumps({'scripts': {'build:web': script}}))
+    (tmp_path / 'tools').mkdir()
+    (tmp_path / 'tools/package-web.cjs').write_text('console.log("web bundle called")')
     for relative, marker in [('typescript/bin/tsc', 'compiler called'), ('vite/bin/vite.js', 'vite called')]:
         entry = tmp_path / 'node_modules' / relative
         entry.parent.mkdir(parents=True)

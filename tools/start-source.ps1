@@ -1,6 +1,7 @@
 param(
     [switch]$NoBrowser,
     [switch]$CheckOnly,
+    [switch]$SkipUpdate,
     [int]$Port = 0
 )
 $ErrorActionPreference = 'Stop'
@@ -47,6 +48,15 @@ if (-not $selectedPython) {
 $launchArgs = @()
 if ($NoBrowser) { $launchArgs += '--no-browser' }
 if ($CheckOnly) { $launchArgs += '--check' }
+if ($SkipUpdate) { $launchArgs += '--skip-update' }
 if ($Port -gt 0) { $launchArgs += @('--port', [string]$Port) }
 & $selectedPython -X utf8 (Join-Path $PSScriptRoot 'start_source.py') @launchArgs
-exit $LASTEXITCODE
+$sourceExit = $LASTEXITCODE
+if ($sourceExit -eq 42) {
+    Write-Host '[Update] Starting the updated source...'
+    # This PowerShell process is outside the old Python Job Object.
+    if ($launchArgs -notcontains '--skip-update') { $launchArgs += '--skip-update' }
+    & $selectedPython -X utf8 (Join-Path $PSScriptRoot 'start_source.py') @launchArgs
+    $sourceExit = $LASTEXITCODE
+}
+exit $sourceExit
