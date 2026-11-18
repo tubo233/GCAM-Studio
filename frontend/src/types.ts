@@ -63,6 +63,7 @@ export interface Job {
 }
 
 export interface RunInfo {
+  stage?: string
   run_id: string
   profile_id: string
   scenario_name?: string

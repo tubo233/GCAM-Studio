@@ -141,13 +141,14 @@ class JobManager:
                 if job.cancel_requested:
                     job.status = "cancelled"
                 else:
-                    job.status = "success"
                     job.result = result
                     job.progress = 1.0
+                    job.status = "success"
             except Exception as exc:
-                job.status = "cancelled" if job.cancel_requested or isinstance(exc, JobCancelled) else "failed"
+                cancelled = job.cancel_requested or isinstance(exc, JobCancelled)
                 job.error = str(exc)
-                job.log(f"{'已取消' if job.status == 'cancelled' else '失败'}：{exc}")
+                job.log(f"{'已取消' if cancelled else '失败'}：{exc}")
+                job.status = "cancelled" if cancelled else "failed"
             finally:
                 job.finished_at = utcnow()
                 job.process = None

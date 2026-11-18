@@ -52,7 +52,7 @@ export default function AppLayout() {
       <Sider width={218} theme="dark" style={{ position: 'sticky', top: 0, height: '100vh' }}>
         <div style={{ padding: '18px 18px 10px', color: '#fff' }}>
           <div style={{ fontSize: 17, fontWeight: 700, letterSpacing: 0.2 }}>GCAM-China Studio</div>
-          <div style={{ fontSize: 11, color: '#8ba3c7', marginTop: 4 }}>情景与数据工作台 · v{health?.version || '0.1.3'}</div>
+          <div style={{ fontSize: 11, color: '#8ba3c7', marginTop: 4 }}>情景与数据工作台 · v{health?.version || '0.1.4'}</div>
         </div>
         <Menu
           theme="dark"

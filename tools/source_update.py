@@ -1,4 +1,4 @@
-"""Confirmed, recoverable source updates for both ZIP and Git installations."""
+"""Recoverable source updates for both ZIP and Git installations."""
 from __future__ import annotations
 
 import contextlib
@@ -304,7 +304,13 @@ def recover(root: Path) -> None:
 def install(root: Path, stage: Path, commit: str, transaction: Path) -> None:
     names = validate_candidate(stage)
     old_git = prepare_git(root, commit, names)
-    old_names = {name for name in read_state(root).get('files', {}) if program_file(name)}
+    recorded = read_state(root).get('files', {})
+    old_names = {name for name in recorded if program_file(name)}
+    if not old_git:
+        for name in sorted(old_names):
+            target = target_path(root, name)
+            if not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest() != recorded[name]:
+                raise ValueError(f'本地程序文件已修改或删除，已保留：{name}。请先备份并恢复原文件再更新。')
     if old_git:
         old_names |= {name for name in git(root, 'ls-files', '-z').stdout.split('\x00') if program_file(name)}
     try:
@@ -369,7 +375,7 @@ def confirm_update(message: str) -> bool:
         return False
 
 
-def check_updates(root: Path, confirm=confirm_update) -> bool:
+def check_updates(root: Path, confirm=None) -> bool:
     try:
         print(f'[更新] 正在检查 GitHub {REPOSITORY} / {BRANCH}…', flush=True)
         head = json.loads(fetch(f'https://api.github.com/repos/{REPOSITORY}/commits/{BRANCH}'))
@@ -389,7 +395,9 @@ def check_updates(root: Path, confirm=confirm_update) -> bool:
         title = ''.join(c if c.isprintable() else ' ' for c in head.get('commit', {}).get('message', '').split('\n')[0])[:180]
         label = '发现更新' if local else '本地没有提交记录，可同步远端源码'
         message = f'[更新] {label}：{current_version} → {package["version"]}，{commit[:8]}\n{title}\n更新前将备份程序源码，现有数据、配置和 release 保留。'
-        if not confirm(message):
+        if confirm is None and local and (git_root(root) or read_state(root).get('files')):
+            print(message + '\n[更新] 正在自动更新。', flush=True)
+        elif not (confirm or confirm_update)(message):
             print('[更新] 本次不更新，继续使用本地版本。', flush=True)
             return False
         # The approved SHA is immutable even if main moves during the download.

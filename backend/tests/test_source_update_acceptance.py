@@ -134,7 +134,8 @@ def test_http_error_does_not_trigger_unnecessary_direct_fallback(monkeypatch):
     assert len(calls) == 1
 
 
-def test_pinned_sha_archive_updates_code_and_preserves_local_files(installed, tmp_path, monkeypatch):
+@pytest.mark.parametrize("automatic", [False, True])
+def test_pinned_sha_archive_updates_code_and_preserves_local_files(installed, tmp_path, monkeypatch, automatic):
     stage = candidate(tmp_path / "remote")
     import hashlib
     (stage / "distribution").mkdir()
@@ -157,8 +158,9 @@ def test_pinned_sha_archive_updates_code_and_preserves_local_files(installed, tm
             return (stage / "package.json").read_bytes()
         return json.dumps({"sha": NEW, "commit": {"message": "fixture update"}}).encode()
     monkeypatch.setattr(updater, "fetch", fetch)
-    assert updater.check_updates(installed, confirm=lambda prompt: prompts.append(prompt) or True)
-    assert len(prompts) == 1 and len(urls) == 3
+    monkeypatch.setattr(updater, "confirm_update", lambda _: pytest.fail("known release must not prompt"))
+    assert updater.check_updates(installed, confirm=None if automatic else lambda prompt: prompts.append(prompt) or True)
+    assert len(prompts) == int(not automatic) and len(urls) == 3
     assert updater.revision(installed) == NEW
     assert json.loads((installed / "package.json").read_text())["version"] == "0.1.3"
     assert not (installed / "backend/obsolete.py").exists()
@@ -349,6 +351,19 @@ def test_git_ignored_private_file_is_not_replaced_by_new_program_file(git_instal
         updater.install(root, stage, new, root / "runtime/updates/private-collision")
     assert private.read_bytes() == b'{"private":"keep"}'
     assert git("rev-parse", "HEAD") == old
+
+
+@pytest.mark.parametrize("remove", [False, True])
+def test_zip_modified_or_deleted_source_survives_update(installed, tmp_path, remove):
+    path = installed / "backend/run_server.py"
+    if remove:
+        path.unlink()
+    else:
+        path.write_text("local edits", encoding="utf-8")
+    before = bytes_under(installed)
+    with pytest.raises(ValueError, match="本地程序文件已修改或删除"):
+        updater.install(installed, candidate(tmp_path / "remote"), NEW, tmp_path / "tx")
+    assert bytes_under(installed) == before
 
 
 def test_zip_unowned_private_file_collision_aborts_without_changes(installed, tmp_path):

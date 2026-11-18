@@ -7,6 +7,7 @@ import LogConsole from '../components/LogConsole'
 import type { Job, RunInfo } from '../types'
 
 const { Title, Text } = Typography
+const stageNames: Record<string, string> = { build: '生成 XML', configure: '准备配置', solve: '模型求解', output: '写入结果库', complete: '完成' }
 
 export default function Runs() {
   const { activeId, active, profiles } = useProfiles()
@@ -155,6 +156,7 @@ export default function Runs() {
             { title: 'Profile', dataIndex: 'profile_id' },
             { title: '场景', dataIndex: 'scenario_name' },
             { title: '状态', dataIndex: 'status', render: (v, r) => <Space direction="vertical" size={0}><Tag color={v === 'success' ? 'green' : v === 'running' ? 'blue' : 'red'}>{v}</Tag>{r.validation_only && <Tag color="orange">至2025验证</Tag>}{r.error && <Text type="danger" style={{ fontSize: 11 }}>{r.error}</Text>}</Space> },
+            { title: '阶段', dataIndex: 'stage', render: (v: string) => stageNames[v] || '—' },
             { title: '耗时', dataIndex: 'elapsed_sec', render: (v) => (v ? `${Math.round(v)} s` : '-') },
             { title: '创建时间', dataIndex: 'created_at', render: (v) => (v ? String(v).replace('T', ' ').slice(0, 19) : '-') },
             { title: '数据库', dataIndex: 'db', render: (v) => <span className="muted" style={{ fontSize: 11 }}>{v || '-'}</span> },
@@ -173,7 +175,7 @@ export default function Runs() {
       </Modal>
 
       <Drawer title="实时日志" open={drawer} onClose={() => setDrawer(false)} width={860}>
-        <LogConsole jobId={activeJob} height={560} />
+        <LogConsole jobId={drawer ? activeJob : undefined} height={560} />
       </Drawer>
     </div>
   )
