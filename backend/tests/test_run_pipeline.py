@@ -428,3 +428,92 @@ def test_direct_xml_edit_starts_from_built_inputs_and_can_revert(model, tmp_path
     assert api.api_xml_content(model, "xml", "sample.xml", run_input=True)["data"]["is_overlay"]
     api.api_file_revert({"profile_id": model,"kind":"xml","path":"sample.xml"})
     assert api.api_xml_content(model, "xml", "sample.xml", run_input=True)["data"]["text"] == loaded["text"]
+
+
+def test_last_started_input_diff_includes_failed_runs_and_external_edits(
+    model, monkeypatch
+):
+    from backend.app.services import input_history, parameter_editor
+
+    path = config.PATHS.baseline_xml / "sample.xml"
+    path.write_text(
+        '<scenario><world><region name="CQ"><ghgpolicy name="CO2"><market>SC</market><constraint year="2025">96.8</constraint></ghgpolicy></region></world></scenario>'
+    )
+    src = "input/gcamdata/xml/sample.xml"
+    assert input_history.comparison(model)["reference"] is None
+
+    def fail_after_launch(cmd, **kwargs):
+        kwargs["on_started"]()
+        return 1
+
+    monkeypatch.setattr(gcam_run, "run_streaming", fail_after_launch)
+    with pytest.raises(RuntimeError):
+        gcam_run.run_gcam(model)
+    reference = input_history.comparison(model)
+    assert reference["reference"]["status"] == "failed"
+    assert reference["changes"] == []
+    path.write_text(path.read_text().replace("96.8", "96.7"))
+    changed = input_history.comparison(model)["changes"][0]
+    assert changed["single"]["market"] == "SC"
+    assert (
+        changed["single"]["region"],
+        changed["single"]["before"],
+        changed["single"]["after"],
+    ) == ("CQ", "96.8", "96.7")
+    dry = gcam_run.run_gcam(model, dry_run=True)
+    assert dry["run_id"] != input_history.reference(model)[0]["run_id"]
+    path.write_text(path.read_text().replace("96.7", "96.8"))
+    assert input_history.comparison(model)["changes"] == []
+
+
+def test_cell_override_follows_rebuilt_xml_and_can_be_removed(model):
+    from backend.app.services import parameter_editor as editor
+
+    src = "input/gcamdata/xml/sample.xml"
+    path = config.PATHS.baseline_xml / "sample.xml"
+    path.write_text(
+        '<scenario><region name="SC"><period year="2030"><efficiency>0.31</efficiency></period><period year="2035"><efficiency>0.35</efficiency></period></region></scenario>'
+    )
+    row = editor.search_rows(model, src, "SC 2030", "efficiency")["rows"][0]
+    editor.save_rows(model, src, [{"id": row["id"], "before": "0.31", "value": "0.4"}])
+    path.write_text(path.read_text().replace("0.35", "0.45").replace("0.31", "0.32"))
+    result = gcam_run.run_gcam(model, dry_run=True)
+    actual = Path(
+        etree.parse(result["config"]).findtext("ScenarioComponents/Value[@name='data']")
+    )
+    assert etree.parse(str(actual)).xpath("//efficiency/text()") == ["0.4", "0.45"]
+    with pytest.raises(ValueError):
+        editor.save_rows(
+            model, src, [{"id": row["id"], "before": "0.31", "value": "9"}]
+        )
+    editor.save_rows(model, src, [{"id": row["id"], "before": "0.4", "value": None}])
+    assert editor.search_rows(model, src, "2030")["rows"][0]["value"] == "0.32"
+
+
+def test_launch_failure_is_not_last_run(model, monkeypatch):
+    from backend.app.services import input_history
+
+    def failure(*args, **kwargs):
+        raise OSError("test launch failure")
+
+    monkeypatch.setattr(gcam_run, "run_streaming", failure)
+    with pytest.raises(OSError):
+        gcam_run.run_gcam(model)
+    assert input_history.reference(model) == (None, None)
+
+
+def test_renamed_parameter_after_rebuild_is_advisory(model):
+    from backend.app.services import parameter_editor as editor
+
+    src = "input/gcamdata/xml/sample.xml"
+    path = config.PATHS.baseline_xml / "sample.xml"
+    path.write_text(
+        '<scenario><period year="2030"><efficiency>0.3</efficiency></period></scenario>'
+    )
+    row = editor.search_rows(model, src)["rows"][0]
+    editor.save_rows(model, src, [dict(id=row["id"], before="0.3", value="0.4")])
+    path.write_text(path.read_text().replace("2030", "2035"))
+    trial = gcam_run.run_gcam(model, dry_run=True)
+    assert trial["status"] == "dry-run" and len(trial["input_warnings"]) == 1
+    editor.save_rows(model, src, [], clear=True)
+    assert not gcam_run.run_gcam(model, dry_run=True)["input_warnings"]

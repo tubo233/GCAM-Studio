@@ -20,7 +20,7 @@ from .hostnet import HostPathError, is_local_client, list_directory, list_drives
 from .db import connect, get_row, list_rows, utcnow
 from .services import catalog as catalog_svc
 from .services import files as files_svc
-from .services import gcam_run, jobs, profiles, queries, r_build, scenario_config
+from .services import input_history, parameter_editor, gcam_run, jobs, profiles, queries, r_build, scenario_config
 from .services.data_migrate import DataMigrateError, migrate_data_dir, same_data_dir
 from .services.processes import JobCancelled
 from .services.diagnostics import tool_checks
@@ -814,3 +814,143 @@ def api_result_export_xlsx(result_id: str) -> FileResponse:
     out = Path(row["path"]).with_suffix(".xlsx")
     wb.save(out)
     return FileResponse(str(out), filename=out.name)
+
+
+@app.get("/api/profiles/{pid}/input-changes")
+def api_input_changes(pid: str):
+    _require_profile(pid)
+    return _ok(input_history.comparison(pid))
+
+
+@app.get("/api/profiles/{pid}/input-changes/detail")
+def api_input_change_detail(
+    pid: str,
+    source: str,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=250),
+):
+    _require_profile(pid)
+    return _ok(input_history.detail(pid, source, offset, limit))
+
+
+@app.get("/api/profiles/{pid}/parameter-rows")
+def api_parameter_rows(
+    pid: str,
+    source: str,
+    query: str = "",
+    fields: str = "",
+    offset: int = Query(0, ge=0),
+    limit: int = Query(60, ge=1, le=250),
+):
+    _require_profile(pid)
+    try:
+        return _ok(
+            parameter_editor.search_rows(pid, source, query, fields, offset, limit)
+        )
+    except etree.XMLSyntaxError as exc:
+        raise ValueError(f"该文件需要在 XML 源码中编辑：{exc.msg}") from exc
+
+
+@app.put("/api/profiles/{pid}/parameter-rows")
+def api_save_parameter_rows(pid: str, body: dict = Body(...)):
+    _require_profile(pid)
+    _require_idle_profile(pid)
+    parameter_editor.save_rows(
+        pid, body["source"], body.get("updates", []), body.get("clear", False)
+    )
+    return _ok()
+
+
+@app.post("/api/profiles/{pid}/input-advice")
+def api_input_advice(pid: str, draft: dict = Body(...)):
+    _require_profile(pid)
+    root = scenario_config.parse_config(
+        (profiles.profile_dir(pid) / "config.xml").read_bytes()
+    )
+    for key, group in [
+        ("components", "ScenarioComponents"),
+        ("files", "Files"),
+        ("bools", "Bools"),
+        ("ints", "Ints"),
+    ]:
+        if key not in draft:
+            continue
+        parent = root.find(group)
+        if parent is None:
+            parent = etree.SubElement(root, group)
+        for node in parent.findall("Value"):
+            parent.remove(node)
+        for item in draft[key]:
+            etree.SubElement(parent, "Value", name=item["name"]).text = item["value"]
+    info = scenario_config.summary(root)
+    build = r_build.latest_build(pid)
+    xml_dir = Path(build["xml_dir"]) if build else PATHS.baseline_xml
+    selected = root.findall("ScenarioComponents/Value") + root.findall(
+        "Files/Value[@name='xmlInputFileName']"
+    )
+    if info["find_path"]:
+        selected += root.findall("Files/Value[@name='policy-target-file']")
+    overrides = parameter_editor.edits(pid)
+    paths, originals = {}, {}
+    advice = []
+    try:
+        for node in selected:
+            if node.text:
+                key = parameter_editor.file_key(node.text)
+                source = Path(gcam_run._resolve_component(node.text, xml_dir, pid))
+                originals[key] = node.text
+                paths[key] = parameter_editor.effective_file(
+                    pid, key, source, overrides, warnings=advice
+                )
+                node.text = str(paths[key])
+        advice.extend(scenario_config.validate_inputs(root, info, fast_mode=False))
+    except (RuntimeError, ValueError, OSError) as exc:
+        advice.append(str(exc))
+    descriptions = [
+        {"source": k, "file": originals[k], "description": v}
+        for k, v in parameter_editor.summaries(paths).items()
+    ]
+    return _ok({"warnings": advice, "policies": descriptions})
+
+
+@app.get("/api/profiles/{pid}/parameter-sources")
+def api_parameter_sources(pid: str, fields: str = ""):
+    _require_profile(pid)
+    return _ok(parameter_editor.list_sources(pid, fields))
+
+
+@app.get("/api/profiles/{pid}/parameter-source")
+def api_parameter_source(pid: str, source: str):
+    _require_profile(pid)
+    path = parameter_editor.source_for(pid, source)
+    if path.suffix.lower() != ".xml":
+        raise ValueError("此入口适用于 XML 组件。")
+    return _ok(
+        {
+            "text": path.read_text("utf-8-sig"),
+            "source": str(path),
+            "path": Path(source).name,
+            "kind": "xml",
+            "overlay": False,
+        }
+    )
+
+
+@app.put("/api/profiles/{pid}/parameter-source")
+def api_update_parameter_source(pid: str, body: dict = Body(...)):
+    _require_profile(pid)
+    _require_idle_profile(pid)
+    key = body["source"]
+    parameter_editor.source_for(pid, key)
+    raw = body["text"].encode("utf-8")
+    try:
+        etree.fromstring(
+            raw,
+            etree.XMLParser(resolve_entities=False, no_network=True, huge_tree=True),
+        )
+    except etree.XMLSyntaxError as exc:
+        raise ValueError(f"XML 第 {exc.lineno} 行格式有误：{exc.msg}") from exc
+    path = parameter_editor.raw_overlay(pid, key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    scenario_config.write_config(path, raw)
+    return _ok()

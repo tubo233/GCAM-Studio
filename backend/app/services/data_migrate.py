@@ -16,6 +16,7 @@ from urllib.parse import quote
 
 PAYLOAD_NAMES = (
     "profiles",
+    "input-history",
     "cache",
     "logs",
     "studio.db",

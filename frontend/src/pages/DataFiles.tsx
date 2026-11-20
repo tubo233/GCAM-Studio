@@ -3,6 +3,7 @@ import {
   Alert, Button, Card, Descriptions, Drawer, Empty, Input, InputNumber, List, Modal, Radio, Select, Space, Table, Tag, Tooltip, Typography, message,
 } from 'antd'
 import { DownloadOutlined, EditOutlined, ReloadOutlined, SearchOutlined, UndoOutlined, UploadOutlined } from '@ant-design/icons'
+import { changed } from '../components/InputChanges'
 import { apiGet, apiPatch, apiPost, fmtSize } from '../api'
 import { useProfiles } from '../context/ProfileContext'
 import type { CatalogFile, FileInfo } from '../types'
@@ -191,6 +192,7 @@ export default function DataFiles({ chinaInput }: {chinaInput?: string} = {}) {
     setWriting(true)
     try {
       await action()
+      changed()
       if (currentContext.current === snapshot.key) {
         loadedRef.current = null
         setLoaded(null)

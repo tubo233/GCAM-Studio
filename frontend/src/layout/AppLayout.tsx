@@ -23,10 +23,11 @@ const { Text } = Typography
 const items = [
   { key: '/', icon: <DashboardOutlined />, label: '总览' },
   { key: '/profiles', icon: <AppstoreOutlined />, label: '情景库' },
-  { key: '/parameters', icon: <SlidersOutlined />, label: '参数中心' },
+  { key: '/model-config', icon: <ApartmentOutlined />, label: '情景编辑' },
+  { key: '/parameter-table', icon: <SlidersOutlined />, label: '统一参数表' },
   { key: '/data', icon: <FolderOpenOutlined />, label: '数据文件' },
   { key: '/xml', icon: <FileTextOutlined />, label: '情景组件 XML' },
-  { key: '/model-config', icon: <ApartmentOutlined />, label: '模型配置' },
+  { key: '/parameters', icon: <SlidersOutlined />, label: '参数目录' },
   { key: '/policy', icon: <ExperimentOutlined />, label: '政策工作室' },
   { key: '/runs', icon: <PlayCircleOutlined />, label: '运行中心' },
   { key: '/results', icon: <BarChartOutlined />, label: '结果与导出' },

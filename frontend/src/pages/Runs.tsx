@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import { Alert, Button, Card, Drawer, Form, Input, InputNumber, Modal, Select, Space, Switch, Table, Tag, Typography, message } from 'antd'
 import { PlayCircleOutlined, ReloadOutlined, StopOutlined, UnorderedListOutlined } from '@ant-design/icons'
-import { Link } from 'react-router-dom'
+import InputChanges from '../components/InputChanges'
+import { Link, useLocation } from 'react-router-dom'
 import { apiGet, apiPost } from '../api'
 import { useProfiles } from '../context/ProfileContext'
 import LogConsole from '../components/LogConsole'
@@ -28,8 +29,9 @@ export default function Runs() {
   const [form] = Form.useForm()
   const [jobs, setJobs] = useState<Job[]>([])
   const [runs, setRuns] = useState<RunInfo[]>([])
-  const [activeJob, setActiveJob] = useState<string>('')
-  const [drawer, setDrawer] = useState(false)
+  const location = useLocation()
+  const [activeJob, setActiveJob] = useState<string>(location.state?.jobId || '')
+  const [drawer, setDrawer] = useState(!!location.state?.jobId)
   const [starting, setStarting] = useState(false)
   const [preview, setPreview] = useState<{id: string; inputs: RunInputs} | null>(null)
   const [previewError, setPreviewError] = useState('')
@@ -164,6 +166,7 @@ export default function Runs() {
         </div>
       </Card>
 
+      {activeId && <InputChanges key={activeId} pid={activeId}/>}
       <Card title="任务队列" extra={<Button size="small" icon={<ReloadOutlined />} onClick={load}>刷新</Button>} style={{ marginBottom: 16 }}>
         <Table
           size="small"

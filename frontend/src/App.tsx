@@ -4,6 +4,7 @@ import AppLayout from './layout/AppLayout'
 import { ProfileProvider } from './context/ProfileContext'
 import Dashboard from './pages/Dashboard'
 import Profiles from './pages/Profiles'
+import ParameterTable from './pages/ParameterTable'
 import Parameters from './pages/Parameters'
 import DataFiles from './pages/DataFiles'
 import XmlBrowser from './pages/XmlBrowser'
@@ -22,6 +23,7 @@ export default function App() {
         <Route element={<AppLayout />}>
           <Route index element={<Dashboard />} />
           <Route path="/profiles" element={<Profiles />} />
+          <Route path="/parameter-table" element={<ParameterTable />} />
           <Route path="/parameters" element={<Parameters />} />
           <Route path="/data" element={<DataFiles />} />
           <Route path="/xml" element={<XmlBrowser />} />

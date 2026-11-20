@@ -26,7 +26,7 @@ def terminate_tree(proc) -> None:
     proc.kill()
 
 
-def run_streaming(cmd, *, cwd, env, log_path: Path, log_fn=None, process_cb=None, timeout=14400):
+def run_streaming(cmd, *, cwd, env, log_path: Path, log_fn=None, process_cb=None, timeout=14400, on_started=None):
     proc = subprocess.Popen(
         cmd, cwd=str(cwd), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, encoding="utf-8", errors="replace", bufsize=1,
@@ -44,6 +44,8 @@ def run_streaming(cmd, *, cwd, env, log_path: Path, log_fn=None, process_cb=None
     reader = threading.Thread(target=read, daemon=True)
     started = time.monotonic()
     try:
+        if on_started:
+            on_started()
         if process_cb:
             process_cb(proc)
         reader.start()

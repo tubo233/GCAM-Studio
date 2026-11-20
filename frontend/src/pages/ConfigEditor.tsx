@@ -3,6 +3,7 @@ import { Alert, Button, Card, Form, Input, Modal, Select, Space, Table, Tabs, Ta
 import { DeleteOutlined, PlusOutlined, SaveOutlined } from '@ant-design/icons'
 import { apiGet, apiPost, apiPut, http } from '../api'
 import { useNavigate } from 'react-router-dom'
+import InputChanges, {changed} from '../components/InputChanges'
 import ScenarioSettings from './ScenarioSettings'
 import DataFiles from './DataFiles'
 import { useProfiles } from '../context/ProfileContext'
@@ -22,6 +23,9 @@ function ProfileConfig({ activeId }: { activeId: string }) {
   const fileRef = useRef<HTMLInputElement>(null)
   const [error, setError] = useState('')
   const [config, setConfig] = useState<any>(null)
+  const [savedForm,setSavedForm] = useState('')
+  const formSignature=(c:any)=>JSON.stringify([c.components,c.files,c.strings,c.bools,c.ints,c.doubles])
+  useEffect(()=>{if(config)setSavedForm(formSignature(config))},[config?.revision])
   const [xmls, setXmls] = useState<XmlItem[]>([])
   const [open, setOpen] = useState(false)
   const [addKind, setAddKind] = useState('xml')
@@ -50,6 +54,7 @@ function ProfileConfig({ activeId }: { activeId: string }) {
         try {
           const r = await http.put(`/api/profiles/${activeId}/config/import`, body)
           await load()
+          changed()
           const count = r.data.data.config_repairs
           message.success(['已导入主配置', count && `修正 ${count} 处 XML 拼写`, r.data.data.rebased_inputs && `已匹配 ${r.data.data.rebased_inputs} 个本机输入文件`].filter(Boolean).join('，'))
         } catch (e: any) {
@@ -72,7 +77,11 @@ function ProfileConfig({ activeId }: { activeId: string }) {
       const saved = await apiPut(`/api/profiles/${activeId}/config`, config)
       setConfig((c: any) => ({...c, revision: saved.revision}))
       message.success('配置已保存到当前 Profile')
-      if (goToRuns) navigate('/runs')
+      changed()
+      if (goToRuns) {
+        const job = await apiPost(`/api/profiles/${activeId}/run`, {config_revision:saved.revision})
+        navigate('/runs', {state:{jobId:job.id}})
+      }
     } catch (e: any) {
       message.error(e.response?.data?.detail || '保存失败')
     } finally {
@@ -116,16 +125,18 @@ function ProfileConfig({ activeId }: { activeId: string }) {
 
   return (
     <div>
-      <Title level={3} className="page-title">模型配置</Title>
-      <p className="page-sub">当前 Profile 使用独立的 config.xml。要采用手工修改的主配置，请导入对应文件。</p>
+      <Title level={3} className="page-title">情景编辑 · {active?.name}</Title>
 
+
+      {config && savedForm && savedForm !== formSignature(config) && <Alert type="info" showIcon message="配置有待保存的改动，保存后将更新下方对照清单。"/>}
+      <InputChanges pid={activeId}/>
       <Card
         extra={<Space><input type="file" accept=".xml" hidden ref={fileRef} onChange={e => { importConfig(e.target.files?.[0]); e.target.value = '' }} />
           <Button onClick={() => fileRef.current?.click()}>导入手工主配置</Button>
           <Button disabled={!config} loading={saving} onClick={saveCopy}>另存为情景</Button>
           <Button type="primary" icon={<SaveOutlined />} disabled={!config} loading={saving} onClick={() => save()}>保存配置</Button>
-          <Button disabled={!config} loading={saving} onClick={() => save(true)}>保存并到运行中心</Button></Space>}
-        title="Profile 主配置"
+          <Button disabled={!config} loading={saving} onClick={() => save(true)}>保存并运行</Button></Space>}
+        title="当前情景"
       >
         {!config ? (
           <Alert type={error ? "error" : "info"} showIcon message={error || "加载中…"} />

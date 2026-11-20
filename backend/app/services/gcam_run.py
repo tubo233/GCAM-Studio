@@ -14,7 +14,7 @@ from typing import Any, Callable
 from lxml import etree
 
 from ..config import PATHS, SETTINGS, alias_path, env_for_tools, require_file
-from . import profiles, r_build, scenario_config
+from . import input_history, parameter_editor, profiles, r_build, scenario_config
 from .processes import JobCancelled, run_streaming
 
 FILE_KEYS = {
@@ -48,6 +48,8 @@ def _resolve_component(path_text: str, build_xml: Path, profile_id: str) -> str:
                 rel = norm[len(relative):]
                 overlay = profiles.overlay_path(profile_id, kind, rel)
                 return str(alias_path(overlay if overlay.is_file() else profiles.safe_relative(base, rel)))
+    custom = parameter_editor.raw_overlay(profile_id, parameter_editor.file_key(p))
+    if custom.is_file(): return str(alias_path(custom))
     if not Path(p).is_absolute():
         return str(alias_path((PATHS.exe_dir / p).resolve()))
     return str(alias_path(p))
@@ -69,7 +71,7 @@ def generate_config(profile_id: str, build: dict[str, Any], run_dir: Path,
                     scenario_name: str | None = None, stop_year: int | None = None,
                     stop_period: int | None = None, max_parallelism: int | None = None,
                     fast_mode: bool = False, extra_int=None, extra_bool=None, config_revision: str | None = None,
-                    log_fn: Callable[[str], None] | None = None) -> Path:
+                    log_fn: Callable[[str], None] | None = None, captured_inputs: dict | None = None) -> Path:
     run_dir.mkdir(parents=True, exist_ok=True)
     raw = (profiles.profile_dir(profile_id) / "config.xml").read_bytes()
     if config_revision and config_revision != scenario_config.revision(raw) and log_fn:
@@ -80,18 +82,28 @@ def generate_config(profile_id: str, build: dict[str, Any], run_dir: Path,
     if fast_mode:
         stop_year = min(stop_year or 2025, 2025)
         stop_period = -1
+    overrides = parameter_editor.edits(profile_id)
+    if captured_inputs is not None:
+        captured_inputs.update(config=parameter_editor.config_values(root), order=[parameter_editor.file_key(n.text) for n in root.findall('ScenarioComponents/Value') if n.text], files={}, warnings=[])
+    def component(text, record=True):
+        path = Path(_resolve_component(text, build_xml, profile_id))
+        key = parameter_editor.file_key(text)
+        resolved = parameter_editor.effective_file(profile_id, key, path, overrides, run_dir / 'inputs', warnings=captured_inputs['warnings'] if captured_inputs is not None else None)
+        if captured_inputs is not None and record: captured_inputs['files'][key] = resolved
+        return str(alias_path(resolved))
+
     for value in root.findall("./Files/Value"):
         name = value.get("name", "")
         if name in FILE_KEYS:
             if name == "xmlInputFileName":
-                value.text = _resolve_component(value.text or "../input/gcamdata/xml/modeltime.xml", build_xml, profile_id)
+                value.text = component(value.text or "../input/gcamdata/xml/modeltime.xml")
             else:
                 value.text = str(alias_path(run_dir / FILE_KEYS[name]))
         elif name in ("policy-target-file", "GHGInputFileName") and value.text:
-            value.text = _resolve_component(value.text, build_xml, profile_id)
+            value.text = component(value.text, record=name != "policy-target-file" or scenario_config.summary(root)["find_path"])
     for value in root.findall("./ScenarioComponents/Value"):
         if value.text:
-            value.text = _resolve_component(value.text, build_xml, profile_id)
+            value.text = component(value.text)
     _set_value(root, "Strings", "scenarioName", scenario_name or root.findtext("./Strings/Value[@name='scenarioName']") or "Reference")
     _set_value(root, "Ints", "stop-year", stop_year)
     _set_value(root, "Ints", "stop-period", -1 if stop_year is not None and stop_period is None else stop_period)
@@ -164,7 +176,7 @@ def run_gcam(profile_id: str, build: dict[str, Any] | None = None,
     run_dir.mkdir(parents=True, exist_ok=True)
     log_path = run_dir / "gcam.log"
     meta = {"run_id": run_id, "profile_id": profile_id, "scenario_name": scenario_name,
-            "status": "running", "stage": "build", "created_at": datetime.now(timezone.utc).isoformat(),
+            "status": "running", "stage": "build", "snapshot_version": 1, "created_at": datetime.now(timezone.utc).isoformat(),
             "run_dir": str(run_dir), "log": str(log_path), "stop_year": stop_year,
             "stop_period": stop_period, "fast_mode": fast_mode, "validation_only": fast_mode,
             "solver_precision": "standard", "model_root": str(PATHS.root), "failed_periods": [],
@@ -189,8 +201,9 @@ def run_gcam(profile_id: str, build: dict[str, Any] | None = None,
         meta.update(build_id=build.get("build_id", ""), xml_dir=build["xml_dir"],
                     input_signature=build.get("input_signature"), stage="configure")
         _save_manifest(run_dir, meta)
+        captured_inputs = {}
         config_path = generate_config(profile_id, build, run_dir, scenario_name, stop_year,
-                                      stop_period, max_parallelism, fast_mode, config_revision=config_revision, log_fn=log)
+                                      stop_period, max_parallelism, fast_mode, config_revision=config_revision, log_fn=log, captured_inputs=captured_inputs)
         meta["config"] = str(config_path)
         log(f"生成配置：{config_path}")
         log(f"XML 来源：{build['xml_dir']}（{'基线' if build.get('reused_baseline') else 'CSV 构建'}）")
@@ -198,7 +211,7 @@ def run_gcam(profile_id: str, build: dict[str, Any] | None = None,
         info = scenario_config.summary(tree)
         meta.update(scenario_name=info["scenario_name"], inputs=info)
         log(f"生效的社会经济输入：{', '.join(info['socioeconomics']) or '自定义'}；政策组件：{', '.join(info['policies']) or '无'}。")
-        meta["input_warnings"] = scenario_config.validate_inputs(tree, info, fast_mode=fast_mode)
+        meta["input_warnings"] = captured_inputs["warnings"] + scenario_config.validate_inputs(tree, info, fast_mode=fast_mode)
         for warning in meta["input_warnings"]:
             log(f"输入提示：{warning}")
         if info["find_path"]:
@@ -255,8 +268,14 @@ def run_gcam(profile_id: str, build: dict[str, Any] | None = None,
                 log("正在写入结果数据库；这一步可能暂时没有新日志，请等进程退出后再判断是否成功。")
 
         with _model_lock():
+            input_history.capture(profile_id, run_dir, captured_inputs)
+
+            def on_process_started():
+                meta['model_started_at'] = datetime.now(timezone.utc).isoformat()
+                _save_manifest(run_dir, meta)
+
             code = run_streaming(cmd, cwd=alias_path(PATHS.exe_dir), env=env_for_tools(SETTINGS),
-                                 log_path=log_path, log_fn=on_line, process_cb=process_cb, timeout=timeout)
+                                 log_path=log_path, log_fn=on_line, process_cb=process_cb, on_started=on_process_started, timeout=timeout)
         meta["exit_code"] = code
         report = run_dir / "logs/target_finder_log.txt"
         if info["find_path"] and not meta.get("target_error") and report.is_file():
