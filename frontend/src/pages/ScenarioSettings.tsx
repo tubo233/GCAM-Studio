@@ -29,11 +29,11 @@ export default function ScenarioSettings({id, config, setConfig, xmls, refreshPo
   const items = all.filter(path => path.toLowerCase().includes(search.toLowerCase()))
   const options = all.map(value => ({value, label:value}))
 
-  const open = async (path: string) => {
+  const open = async (path: string, kind: 'xml' | 'policy' = 'policy') => {
     const request = ++openId.current
     try {
-      const r = await apiGet('/api/xml/content', {profile_id:id,kind:'policy',path})
-      if (openId.current === request) setFile({path, text:r.text})
+      const r = await apiGet('/api/xml/content', {profile_id:id,kind,path,run_input:kind === 'xml'})
+      if (openId.current === request) setFile({path, text:r.text, kind, source:r.source, overlay:r.is_overlay})
     } catch (e: any) { message.error(e.response?.data?.detail || '文件读取失败') }
   }
   const toggle = (path: string, on: boolean) => setConfig((c: any) => {
@@ -51,7 +51,7 @@ export default function ScenarioSettings({id, config, setConfig, xmls, refreshPo
     finally {setTemplateBusy(false)}
   }
   const savedFile = async (path: string, root: string, use: boolean) => {
-    setExtra(prev => [...new Set([...prev, path])])
+    if (file?.kind !== 'xml') setExtra(prev => [...new Set([...prev, path])])
     if (use) {
       const next = {...config}
       if (root === 'policy-target-runner') {
@@ -86,7 +86,14 @@ export default function ScenarioSettings({id, config, setConfig, xmls, refreshPo
         <Form.Item label="场景名称"><Input value={config.strings.find((r: Row) => r.name === 'scenarioName')?.value || ''}
           onChange={e => setConfig({...config,strings:field(config.strings,'scenarioName',e.target.value)})}/></Form.Item>
       </Space>
-      <div>当前社会经济输入 · {(config.components as Row[]).map(r => r.value.split(/[\\/]/).pop()).filter(x => x?.toLowerCase().startsWith('socioeconomics')).join('、') || '自定义'}</div>
+      <div>当前社会经济输入 · {(config.components as Row[]).filter(r => /(?:^|[\\/])socioeconomics[^\\/]*\.xml$/i.test(r.value)).map((r,i) => {
+        const path = r.value.replace(/\\/g,'/')
+        const prefix = (config.model_root || '').replace(/\\/g,'/') + '/input/gcamdata/xml/'
+        const relative = path.match(/^(?:\.\.\/|\.\/)?input\/gcamdata\/xml\/(.+)$/i)?.[1] ||
+          (path.toLowerCase().startsWith(prefix.toLowerCase()) ? path.slice(prefix.length) : '')
+        return relative ? <Button type="link" key={i} title="按地区和年份编辑当前组件" onClick={() => open(relative, 'xml')}>{relative}</Button>
+          : <Typography.Text key={i}>{r.value} </Typography.Text>
+      })}</div>
     </Form>
     <Space wrap>
       <Checkbox checked={findPath} onChange={e => setConfig({...config,bools:field(config.bools,'find-path',e.target.checked ? '1':'0')})}>搜索气候目标</Checkbox>
@@ -101,7 +108,7 @@ export default function ScenarioSettings({id, config, setConfig, xmls, refreshPo
       <Button onClick={() => refreshPolicies().catch(() => message.error('政策目录刷新失败'))}>刷新政策目录</Button>
       <input ref={importRef} type="file" accept=".xml" hidden onChange={async e => {
         const f = e.target.files?.[0]; e.target.value = ''
-        if (f) { ++openId.current; setFile({path:f.name, text:await f.text(), imported:true}) }
+        if (f) { ++openId.current; setFile({path:f.name, text:await f.text()}) }
       }}/>
     </Space>
     <Table size="small" rowKey={p => p} dataSource={items} pagination={{pageSize:8,showSizeChanger:false}}

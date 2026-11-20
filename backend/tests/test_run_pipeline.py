@@ -414,3 +414,17 @@ def test_running_profile_can_be_cloned_for_further_edits(model, monkeypatch):
     api.api_put_config(clone, cfg)
     assert api.api_run_inputs(clone)["data"]["scenario_name"] == "edited copy"
     assert api.api_run_inputs(model)["data"]["scenario_name"] != "edited copy"
+
+def test_direct_xml_edit_starts_from_built_inputs_and_can_revert(model, tmp_path):
+    document = tmp_path / "built-xml"
+    document.mkdir()
+    (document / "sample.xml").write_text("<scenario><GDP>12</GDP></scenario>")
+    manifest = profiles.profile_dir(model) / "builds" / "built" / "manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(json.dumps({"status":"success","xml_dir":str(document),"input_signature":r_build.input_signature(model)}))
+    loaded = api.api_xml_content(model, "xml", "sample.xml", run_input=True)["data"]
+    assert loaded["source"] == "当前 CSV 构建" and "<GDP>12</GDP>" in loaded["text"]
+    api.api_xml_save({"profile_id": model,"kind":"xml","path":"sample.xml","text":"<scenario><GDP>13</GDP></scenario>"})
+    assert api.api_xml_content(model, "xml", "sample.xml", run_input=True)["data"]["is_overlay"]
+    api.api_file_revert({"profile_id": model,"kind":"xml","path":"sample.xml"})
+    assert api.api_xml_content(model, "xml", "sample.xml", run_input=True)["data"]["text"] == loaded["text"]

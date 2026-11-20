@@ -441,13 +441,21 @@ async def api_file_import(
 
 # --------------------------------------------------------------------------- XML / config
 @app.get("/api/xml/content")
-def api_xml_content(profile_id: str, kind: str, path: str) -> dict[str, Any]:
+def api_xml_content(profile_id: str, kind: str, path: str, run_input: bool = False) -> dict[str, Any]:
     _require_profile(profile_id)
     p, is_overlay = profiles.resolve_file(profile_id, kind, path)
+    source = "Profile 覆盖" if is_overlay else "模型文件"
+    if run_input and kind == "xml" and not is_overlay:
+        build = r_build.latest_build(profile_id)
+        if build and not r_build.build_is_stale(profile_id, build):
+            p = profiles.safe_relative(Path(build["xml_dir"]), path)
+            source = "模型文件" if build.get("reused_baseline") else "当前 CSV 构建"
+        elif r_build.has_data_overlay(profile_id):
+            source = "模型文件（当前 CSV 尚未构建）"
     if not p.is_file():
         raise HTTPException(404, "文件不存在")
     text = p.read_text(encoding="utf-8", errors="replace")
-    return _ok({"text": text, "is_overlay": is_overlay, "size": p.stat().st_size, "path": str(p)})
+    return _ok({"text": text, "is_overlay": is_overlay, "size": p.stat().st_size, "path": str(p), "source": source})
 
 
 @app.put("/api/xml/content")
@@ -511,7 +519,7 @@ def api_get_config(pid: str) -> dict[str, Any]:
     for tag, key in (("Strings", "strings"), ("Bools", "bools"), ("Ints", "ints"), ("Doubles", "doubles")):
         for v in root.findall(f"./{tag}/Value"):
             out[key].append({"name": v.get("name", ""), "value": v.text or ""})
-    out.update(inputs=scenario_config.summary(root), revision=scenario_config.revision(raw),
+    out.update(inputs=scenario_config.summary(root), revision=scenario_config.revision(raw), model_root=str(PATHS.root),
                templates=sorted(p.name for p in PATHS.exe_dir.glob("configuration*.xml")))
     return _ok(out)
 

@@ -45,9 +45,10 @@ function EditableCell({ value, onSave, disabled }: { value: string; onSave: (v: 
 export default function DataFiles({ chinaInput }: {chinaInput?: string} = {}) {
   const ssp = chinaInput?.match(/^socioeconomics_CHINA_(SSP[1-5])\.xml$/i)?.[1].toUpperCase()
   const shortcuts = ssp ? [
-    [`${ssp} 人口增速`, 'SSPS_Population.csv'], [`${ssp} GDP 增速`, 'SSPS_GDP.csv'],
+    [`${ssp} 人口和 GDP 路径`, 'socioeconomics/SSP/SSP_database_2024.csv.gz'], ['省级人口增速', 'gcam-china/Population_Growth_Rates.csv'],
   ] : chinaInput === 'socioeconomics_CHINA.xml' ? [
-    ['省级人口', 'population_thous_province.csv'], ['省级 GDP', 'gdp_mil10usd_province.csv'],
+    ['省级人口增速', 'gcam-china/Population_Growth_Rates.csv'], ['全国人口增速（SSP2 列）', 'gcam-china/SSPS_Population.csv'],
+    ['全国 GDP 增速（SSP2 列）', 'gcam-china/SSPS_GDP.csv'],
   ] : []
   const { activeId, active } = useProfiles()
   const initialParams = new URLSearchParams(window.location.search)
@@ -95,7 +96,7 @@ export default function DataFiles({ chinaInput }: {chinaInput?: string} = {}) {
     if (!selected && list.length) {
       setSelected(
         (initialFile ? list.find((f) => f.path === initialFile) : undefined) ||
-          list.find((f) => f.path === `gcam-china/${shortcuts[0]?.[1] || 'population_thous_province.csv'}`) ||
+          list.find((f) => f.path === (shortcuts[0]?.[1] || 'gcam-china/Population_Growth_Rates.csv')) ||
           list.find((f) => f.module === 'gcam-china' && f.rows > 0) ||
           list.find((f) => f.rows > 0) ||
           list[0],
@@ -270,10 +271,10 @@ export default function DataFiles({ chinaInput }: {chinaInput?: string} = {}) {
 
       {!!shortcuts.length && <Space wrap style={{marginBottom:12}}>
         <Text>本情景常用输入</Text>
-        {[...shortcuts, ['省级能源平衡', 'en_balance_Mtce_Yh_province.csv']].map(([label, name]) => {
-          const target = files.find(f => f.path === 'gcam-china/' + name)
+        {[...shortcuts, ['省级能源平衡', 'gcam-china/en_balance_Mtce_Yh_province.csv']].map(([label, name]) => {
+          const target = files.find(f => f.path === name)
           return target && <Button key={name} size="small" title={name} disabled={writing} onClick={() => {
-            setModule('gcam-china'); setSearch(name); setSelected(target)
+            setModule(target.module); setSearch(target.name); setSelected(target)
           }}>{label}</Button>
         })}
       </Space>}
