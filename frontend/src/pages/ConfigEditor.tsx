@@ -135,7 +135,7 @@ function ProfileConfig({ activeId }: { activeId: string }) {
               { key: 'scenario', label: '情景与政策', children: <ScenarioSettings id={activeId} config={config} setConfig={setConfig} xmls={xmls} refreshPolicies={async () => {
                 setXmls(await apiGet<XmlItem[]>('/api/catalog/xml', {profile_id:activeId}))
               }}/>  },
-              { key: 'data', label: '输入数据 CSV', children: <DataFiles /> },
+              { key: 'data', label: '输入数据 CSV', children: <DataFiles chinaInput={config.components.map((r: any) => String(r.value).split(/[\\/]/).pop()).filter((n: string) => /^socioeconomics_CHINA(?:_SSP[1-5])?\.xml$/i.test(n)).pop()} /> },
               {
                 key: 'components',
                 label: `情景组件 (${config.components.length})`,

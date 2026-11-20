@@ -42,7 +42,13 @@ function EditableCell({ value, onSave, disabled }: { value: string; onSave: (v: 
   )
 }
 
-export default function DataFiles() {
+export default function DataFiles({ chinaInput }: {chinaInput?: string} = {}) {
+  const ssp = chinaInput?.match(/^socioeconomics_CHINA_(SSP[1-5])\.xml$/i)?.[1].toUpperCase()
+  const shortcuts = ssp ? [
+    [`${ssp} 人口增速`, 'SSPS_Population.csv'], [`${ssp} GDP 增速`, 'SSPS_GDP.csv'],
+  ] : chinaInput === 'socioeconomics_CHINA.xml' ? [
+    ['省级人口', 'population_thous_province.csv'], ['省级 GDP', 'gdp_mil10usd_province.csv'],
+  ] : []
   const { activeId, active } = useProfiles()
   const initialParams = new URLSearchParams(window.location.search)
   const initialModule = initialParams.get('module') || ''
@@ -89,7 +95,7 @@ export default function DataFiles() {
     if (!selected && list.length) {
       setSelected(
         (initialFile ? list.find((f) => f.path === initialFile) : undefined) ||
-          list.find((f) => f.path === 'gcam-china/population_thous_province.csv') ||
+          list.find((f) => f.path === `gcam-china/${shortcuts[0]?.[1] || 'population_thous_province.csv'}`) ||
           list.find((f) => f.module === 'gcam-china' && f.rows > 0) ||
           list.find((f) => f.rows > 0) ||
           list[0],
@@ -262,6 +268,15 @@ export default function DataFiles() {
 
       {!activeId && <Alert type="warning" showIcon message="请先在顶部选择一个参数环境（Profile）" style={{ marginBottom: 16 }} />}
 
+      {!!shortcuts.length && <Space wrap style={{marginBottom:12}}>
+        <Text>本情景常用输入</Text>
+        {[...shortcuts, ['省级能源平衡', 'en_balance_Mtce_Yh_province.csv']].map(([label, name]) => {
+          const target = files.find(f => f.path === 'gcam-china/' + name)
+          return target && <Button key={name} size="small" title={name} disabled={writing} onClick={() => {
+            setModule('gcam-china'); setSearch(name); setSelected(target)
+          }}>{label}</Button>
+        })}
+      </Space>}
       <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
         <Card style={{ width: 340, flex: '0 0 340px' }} styles={{ body: { padding: 12 } }}>
           <Input
