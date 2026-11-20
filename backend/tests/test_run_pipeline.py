@@ -300,3 +300,117 @@ def test_partial_run_exports_only_calculated_years(tmp_path):
     assert len(rows) == 2
     assert rows[0]['2025'] == '2' and rows[1]['2025'] == '3'
     assert all(not any(key in row for key in ('2035', '2050', '2100')) for row in rows)
+
+def test_market_warnings_are_advisory_and_overlays_are_used(model, monkeypatch):
+    cfg = profiles.profile_dir(model) / "config.xml"
+    tree = etree.parse(str(cfg))
+    etree.SubElement(tree.find("Bools"), "Value", name="find-path").text = "1"
+    etree.SubElement(tree.find("Ints"), "Value", name="stop-year").text = "2060"
+    policy = config.PATHS.policy_dir
+    policy.mkdir(parents=True)
+    target = policy / "target.xml"
+    target.write_text("<policy-target-runner><tax-name>CO2_LTG</tax-name></policy-target-runner>")
+    etree.SubElement(tree.find("Files"), "Value", name="policy-target-file").text = str(target)
+    link = policy / "custom.xml"
+    link.write_text("<scenario><!-- <linked-policy>CO2_LTG</linked-policy> --></scenario>")
+    etree.SubElement(tree.find("ScenarioComponents"), "Value", name="custom").text = str(link)
+    tree.find("ScenarioComponents").append(etree.Comment('Value name="other">../input/policy/inactive.xml</Value'))
+    tree.write(str(cfg))
+    (config.PATHS.baseline_xml / "modeltime.xml").write_text("<scenario><modeltime><end-year>2100</end-year></modeltime></scenario>")
+
+    result = gcam_run.run_gcam(model, dry_run=True)
+    assert result["inputs"]["commented_policies"] == ["inactive.xml"]
+    assert result["inputs"]["policies"] == ["custom.xml"]
+    assert len(result["input_warnings"]) == 2
+    assert "CO2_LTG" in result["input_warnings"][0]
+    assert "2100" in result["input_warnings"][1]
+
+    def process(cmd, **kwargs):
+        db_dir = kwargs["log_path"].parent / "database_basexdb"
+        db_dir.mkdir()
+        (db_dir / "tbl.basex").touch()
+        kwargs["log_fn"]("All model periods solved correctly.")
+        return 0
+    monkeypatch.setattr(gcam_run, "run_streaming", process)
+    assert gcam_run.run_gcam(model)["status"] == "success"
+    overlay = profiles.overlay_path(model, "policy", "custom.xml")
+    overlay.parent.mkdir(parents=True, exist_ok=True)
+    overlay.write_text("<scenario><linked-ghg-policy name='my-link'><linked-policy>CO2_LTG</linked-policy></linked-ghg-policy></scenario>")
+    corrected = gcam_run.run_gcam(model, dry_run=True, stop_year=2100)
+    assert not corrected["input_warnings"]
+    assert str(overlay) in Path(corrected["config"]).read_text()
+
+
+def test_manual_config_edits_survive_template_switch_and_save(model):
+    from backend.app.services import scenario_config
+    cfg = profiles.profile_dir(model) / "config.xml"
+    tree = etree.parse(str(cfg))
+    comps = tree.find("ScenarioComponents")
+    comps.append(etree.Comment('Value name="disabled">../input/policy/disabled.xml</Value'))
+    custom = etree.SubElement(comps, "Value", name="provincial", version="manual")
+    custom.text = "../input/policy/user.xml"
+    tree.write(str(cfg))
+    selected = config.PATHS.exe_dir / "configuration_china_ssp3.xml"
+    selected.write_text("<Configuration><ScenarioComponents><Value name='socio'>../input/gcamdata/xml/socioeconomics_SSP3.xml</Value>"
+                        '<--Value name="sc">../input/policy/sc.xml</Value--></ScenarioComponents></Configuration>'.replace('<--Value', '\n<--Value'))
+    data = api.api_get_config(model)["data"]
+    data["components"] = api.api_template_components(model, {"template":selected.name,"components":data["components"]})["data"]
+    assert [r["name"] for r in data["components"]] == ["socio","provincial"]
+    data["strings"] = [{"name":"scenarioName","value":"My scenario"}]
+    api.api_put_config(model,data)
+    with pytest.raises(api.HTTPException, match="409"):
+        api.api_put_config(model,data)
+    saved = etree.parse(str(cfg))
+    assert saved.find("./ScenarioComponents/Value[@name='provincial']").get("version") == "manual"
+    assert scenario_config.summary(saved)["commented_policies"] == ["disabled.xml"]
+    assert saved.findtext("./Strings/Value[@name='scenarioName']") == "My scenario"
+    assert b"<--Value" in selected.read_bytes()
+
+
+def test_new_disk_policies_show_up_after_catalog_is_cached(model):
+    config.PATHS.policy_dir.mkdir(parents=True,exist_ok=True)
+    assert api.api_catalog_xml(kind="policy",profile_id=model)["data"] == []
+    path = config.PATHS.policy_dir / "dropped.xml"
+    path.write_text("<scenario name='regional'/>")
+    assert api.api_catalog_xml(kind="policy",profile_id=model)["data"][0]["path"] == path.name
+    path.unlink()
+    assert api.api_catalog_xml(kind="policy",profile_id=model)["data"] == []
+
+
+def test_import_rebases_only_existing_inputs_from_the_missing_install(model):
+    from backend.app.services import scenario_config
+    raw = br'<Configuration><Files><Value name="xmlInputFileName">Z:\not-a-real-install\input\gcamdata\xml\modeltime.xml</Value></Files><ScenarioComponents><Value name="core">Z:\not-a-real-install\input\gcamdata\xml\sample.xml</Value><Value name="outside">Z:\external\custom.xml</Value></ScenarioComponents></Configuration>'
+    data, count = scenario_config.portable_import(raw, config.PATHS.root)
+    assert count == 2
+    xml = etree.fromstring(data)
+    assert xml.findtext('ScenarioComponents/Value') == '../input/gcamdata/xml/sample.xml'
+    assert xml.findtext("ScenarioComponents/Value[@name='outside']") == r'Z:\external\custom.xml'
+
+def test_csv_rebuild_honors_external_edits_and_explicit_request(model, monkeypatch):
+    source = config.PATHS.extdata / "external.csv"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text("year,value\n2025,2\n")
+    baseline = r_build.run_build(model)
+    assert baseline["reused_baseline"]
+    source.write_text("year,value\n2025,13\n")
+    assert r_build.build_is_stale(model, baseline)
+
+    def enter_r_build(*args):
+        raise RuntimeError("constructing R input mirror")
+    monkeypatch.setattr(r_build, "prepare_mirror", enter_r_build)
+    with pytest.raises(RuntimeError, match="constructing R input mirror"):
+        r_build.run_build(model)
+    clone = profiles.clone_profile(model, "without-history")["id"]
+    with pytest.raises(RuntimeError, match="constructing R input mirror"):
+        r_build.run_build(clone, force_from_data=True)
+
+def test_running_profile_can_be_cloned_for_further_edits(model, monkeypatch):
+    job = jobs.Job(id="running-test", kind="run", title="test", profile_id=model)
+    job.status = "running"
+    monkeypatch.setattr(jobs.MANAGER, "jobs", {job.id:job})
+    clone = api.api_clone_profile(model, {"name":"new scenario"})["data"]["id"]
+    cfg = api.api_get_config(clone)["data"]
+    cfg["strings"] = [{"name":"scenarioName", "value":"edited copy"}]
+    api.api_put_config(clone, cfg)
+    assert api.api_run_inputs(clone)["data"]["scenario_name"] == "edited copy"
+    assert api.api_run_inputs(model)["data"]["scenario_name"] != "edited copy"

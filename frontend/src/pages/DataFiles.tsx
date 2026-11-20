@@ -68,11 +68,14 @@ export default function DataFiles() {
   const [bulkValue, setBulkValue] = useState(1.1)
   const [dirty, setDirty] = useState(0)
   const [revision, setRevision] = useState(0)
+  const [rowSearch, setRowSearch] = useState('')
+  const [searchDraft, setSearchDraft] = useState('')
+  const [yearColumn, setYearColumn] = useState<string>()
   const [loaded, setLoaded] = useState<DataContext | null>(null)
   const [writing, setWriting] = useState(false)
   const writingRef = useRef(false)
   const generation = useRef(0)
-  const contextKey = JSON.stringify([activeId, selected?.path || '', page, pageSize])
+  const contextKey = JSON.stringify([activeId, selected?.path || '', page, pageSize, rowSearch])
   const currentContext = useRef(contextKey)
   currentContext.current = contextKey
   const loadedRef = useRef(loaded)
@@ -119,6 +122,9 @@ export default function DataFiles() {
   // A table is one immutable identity: profile, file and page. Never mix responses.
   useEffect(() => {
     setPage(1)
+    setRowSearch('')
+    setSearchDraft('')
+    setYearColumn(undefined)
     setBulkOpen(false)
     setDiffOpen(false)
   }, [activeId, selected?.path])
@@ -155,7 +161,7 @@ export default function DataFiles() {
     Promise.all([
       apiGet<FileInfo>('/api/files/info', { profile_id: snapshot.profileId, kind: 'data', path: snapshot.path }),
       apiGet<any>('/api/files/page', { profile_id: snapshot.profileId, kind: 'data', path: snapshot.path,
-        offset: (snapshot.page - 1) * snapshot.pageSize, limit: snapshot.pageSize }),
+        offset: (snapshot.page - 1) * snapshot.pageSize, limit: snapshot.pageSize, search: rowSearch || undefined }),
     ]).then(([nextInfo, result]) => receive(nextInfo, result)).catch(() => {
       if (!cancelled && currentContext.current === snapshot.key) {
         setLoading(false)
@@ -164,7 +170,7 @@ export default function DataFiles() {
       }
     })
     return () => { cancelled = true }
-  }, [activeId, selected?.path, page, pageSize, revision])
+  }, [activeId, selected?.path, page, pageSize, rowSearch, revision])
 
   const loadPage = (p = page, ps = pageSize) => {
     setPage(p)
@@ -232,7 +238,8 @@ export default function DataFiles() {
 
   const columns = useMemo(() => {
     if (!info) return []
-    return info.columns.map((c) => ({
+    const visible = yearColumn ? info.columns.filter(c => !info.year_columns.includes(c) || c === yearColumn) : info.columns
+    return visible.map((c) => ({
       title: c,
       dataIndex: c,
       key: c,
@@ -244,7 +251,7 @@ export default function DataFiles() {
         return <EditableCell key={`${contextKey}:${rowIds[idx]}:${c}`} disabled={!ready || writing} value={value} onSave={(v) => saveCell(loaded, rowIds[idx], c, v)} />
       },
     }))
-  }, [info, rows, rowIds, loaded, ready, writing, contextKey, saveCell])
+  }, [info, rows, rowIds, loaded, ready, writing, contextKey, saveCell, yearColumn])
 
   const dataSource = rows.map((r, i) => ({ key: rowIds[i] ?? i, ...Object.fromEntries(info?.columns.map((c, j) => [c, r[j]] ) || []) }))
 
@@ -327,8 +334,14 @@ export default function DataFiles() {
                     <Alert type="warning" showIcon message="Excel 文件暂以原文件方式管理：可下载、替换，不支持表格内编辑。" />
                   ) : (
                     <>
-                      <Space style={{ marginBottom: 8 }}>
-                        <Text type="secondary">提示：双击单元格编辑；保存后自动写入 Profile 覆盖层。</Text>
+                      <Space wrap style={{ marginBottom: 8 }}>
+                        <Input.Search aria-label="筛选数据行" placeholder="搜地区、部门等行内容" style={{width:230}}
+                          allowClear disabled={writing} value={searchDraft} onChange={e => setSearchDraft(e.target.value)}
+                          onSearch={value => { setPage(1); setRowSearch(value.trim()) }}/>
+                        {!!info.year_columns.length && <Select aria-label="显示年份" style={{width:150}} allowClear showSearch
+                          placeholder="显示全部年份" value={yearColumn} onChange={setYearColumn}
+                          options={info.year_columns.map(value => ({value,label:value}))}/>}
+                        <Text type="secondary">双击单元格编辑</Text>
                         {dirty > 0 && <Tag color="green">本次会话已保存 {dirty} 次</Tag>}
                       </Space>
                       <Table
@@ -373,7 +386,7 @@ export default function DataFiles() {
         />
       </Drawer>
 
-      <Modal title="批量修改" open={bulkOpen} confirmLoading={writing} okButtonProps={{ disabled: !ready || writing }} onOk={runBulk} onCancel={() => setBulkOpen(false)} okText="执行">
+      <Modal title="批量修改整列" open={bulkOpen} confirmLoading={writing} okButtonProps={{ disabled: !ready || writing }} onOk={runBulk} onCancel={() => setBulkOpen(false)} okText="执行">
         <Space direction="vertical" style={{ width: '100%' }}>
           <Select
             style={{ width: '100%' }}

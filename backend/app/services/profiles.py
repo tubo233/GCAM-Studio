@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import PATHS, SETTINGS
+from . import scenario_config
 from ..db import connect, get_row, list_rows, row_to_dict, utcnow
 
 
@@ -89,17 +90,22 @@ def count_overlay_files(profile_id: str) -> int:
     return sum(1 for p in root.rglob("*") if p.is_file())
 
 
-def create_profile(name: str, template: str = "configuration_china.xml", description: str = "") -> dict[str, Any]:
+def create_profile(name: str, template: str = "configuration_china.xml", description: str = "", *,
+                   config_bytes: bytes | None = None) -> dict[str, Any]:
     if Path(template).name != template or "/" in template or "\\" in template:
         raise ValueError("配置模板必须是模型 exe 目录中的文件名。")
     base = PATHS.exe_dir / template
-    if not base.is_file():
+    if config_bytes is None and not base.is_file():
         # allow bare names
         alt = PATHS.exe_dir / f"configuration_{template}.xml"
         if alt.is_file():
             base = alt
         else:
             raise FileNotFoundError(f"Configuration template not found: {template}")
+    from_archive = config_bytes is not None
+    config_bytes, repairs = scenario_config.imported_config(config_bytes if from_archive else base.read_bytes())
+    if from_archive:
+        config_bytes, _ = scenario_config.portable_import(config_bytes, PATHS.root)
     pid = slugify(name)
     # ensure unique
     if profile_dir(pid).exists():
@@ -107,12 +113,13 @@ def create_profile(name: str, template: str = "configuration_china.xml", descrip
     d = profile_dir(pid)
     for sub in ("overlay", "builds", "runs", "snapshots"):
         (d / sub).mkdir(parents=True, exist_ok=True)
-    shutil.copy2(base, d / "config.xml")
+    (d / "config.xml").write_bytes(config_bytes)
     meta = {
         "id": pid,
         "name": name,
         "description": description,
         "base_config": base.name,
+        "config_repairs": repairs,
         "created_at": utcnow(),
         "updated_at": utcnow(),
         "tags": [],

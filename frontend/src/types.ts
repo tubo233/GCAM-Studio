@@ -2,6 +2,7 @@ export interface Profile {
   id: string
   name: string
   description?: string
+  config_repairs?: number
   base_config?: string
   created_at?: string
   updated_at?: string
@@ -63,6 +64,7 @@ export interface Job {
 }
 
 export interface RunInfo {
+  input_warnings?: string[]
   stage?: string
   run_id: string
   profile_id: string

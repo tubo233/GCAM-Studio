@@ -14,7 +14,7 @@ from typing import Any, Callable
 from lxml import etree
 
 from ..config import PATHS, SETTINGS, alias_path, env_for_tools, require_file
-from . import profiles, r_build
+from . import profiles, r_build, scenario_config
 from .processes import JobCancelled, run_streaming
 
 FILE_KEYS = {
@@ -35,6 +35,11 @@ def _resolve_component(path_text: str, build_xml: Path, profile_id: str) -> str:
     if not p:
         return p
     norm = p.replace("\\", "/")
+    if Path(p).is_absolute():
+        absolute = Path(p).resolve()
+        if absolute.is_relative_to(PATHS.root.resolve()):
+            norm = absolute.relative_to(PATHS.root.resolve()).as_posix()
+    norm = norm.removeprefix("./")
     for prefix, kind, base in (("input/gcamdata/xml/", "xml", build_xml),
                                ("input/policy/", "policy", PATHS.policy_dir),
                                ("input/extra/", "extra", PATHS.extra_dir)):
@@ -61,12 +66,16 @@ def _set_value(root, tag: str, name: str, value) -> None:
 
 
 def generate_config(profile_id: str, build: dict[str, Any], run_dir: Path,
-                    scenario_name: str = "Reference", stop_year: int | None = None,
+                    scenario_name: str | None = None, stop_year: int | None = None,
                     stop_period: int | None = None, max_parallelism: int | None = None,
-                    fast_mode: bool = False, extra_int=None, extra_bool=None) -> Path:
+                    fast_mode: bool = False, extra_int=None, extra_bool=None, config_revision: str | None = None,
+                    log_fn: Callable[[str], None] | None = None) -> Path:
     run_dir.mkdir(parents=True, exist_ok=True)
-    tree = etree.parse(str(profiles.profile_dir(profile_id) / "config.xml"))
-    root = tree.getroot()
+    raw = (profiles.profile_dir(profile_id) / "config.xml").read_bytes()
+    if config_revision and config_revision != scenario_config.revision(raw) and log_fn:
+        log_fn("主配置在预览后已更新，本次采用当前保存的配置。")
+    root = scenario_config.parse_config(raw)
+    tree = root.getroottree()
     build_xml = Path(build["xml_dir"])
     if fast_mode:
         stop_year = min(stop_year or 2025, 2025)
@@ -74,18 +83,16 @@ def generate_config(profile_id: str, build: dict[str, Any], run_dir: Path,
     for value in root.findall("./Files/Value"):
         name = value.get("name", "")
         if name in FILE_KEYS:
-            target = build_xml / "modeltime.xml" if name == "xmlInputFileName" else run_dir / FILE_KEYS[name]
             if name == "xmlInputFileName":
-                overlay = profiles.overlay_path(profile_id, "xml", "modeltime.xml")
-                if overlay.is_file():
-                    target = overlay
-            value.text = str(alias_path(target))
+                value.text = _resolve_component(value.text or "../input/gcamdata/xml/modeltime.xml", build_xml, profile_id)
+            else:
+                value.text = str(alias_path(run_dir / FILE_KEYS[name]))
         elif name in ("policy-target-file", "GHGInputFileName") and value.text:
             value.text = _resolve_component(value.text, build_xml, profile_id)
     for value in root.findall("./ScenarioComponents/Value"):
         if value.text:
             value.text = _resolve_component(value.text, build_xml, profile_id)
-    _set_value(root, "Strings", "scenarioName", scenario_name)
+    _set_value(root, "Strings", "scenarioName", scenario_name or root.findtext("./Strings/Value[@name='scenarioName']") or "Reference")
     _set_value(root, "Ints", "stop-year", stop_year)
     _set_value(root, "Ints", "stop-period", -1 if stop_year is not None and stop_period is None else stop_period)
     _set_value(root, "Ints", "max-parallelism", max_parallelism)
@@ -114,12 +121,11 @@ def _prepare_logs(run_dir: Path) -> Path:
 def _model_lock():
     path = PATHS.exe_dir / ".studio-run.lock"
     with path.open("a+b") as handle:
-        handle.seek(0)
-        if not handle.read(1):
-            handle.write(b"0")
-            handle.flush()
-        handle.seek(0)
         try:
+            if not os.fstat(handle.fileno()).st_size:
+                handle.write(b"0")
+                handle.flush()
+            handle.seek(0)
             if os.name == "nt":
                 import msvcrt
                 msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
@@ -145,10 +151,11 @@ def _save_manifest(run_dir: Path, meta: dict) -> None:
 
 
 def run_gcam(profile_id: str, build: dict[str, Any] | None = None,
-             scenario_name: str = "Reference", stop_year: int | None = None,
+             scenario_name: str | None = None, stop_year: int | None = None,
              stop_period: int | None = None, max_parallelism: int | None = None,
              fast_mode: bool = False, log_fn: Callable[[str], None] | None = None,
-             process_cb=None, dry_run: bool = False, timeout: int = 24 * 3600, rebuild: bool = False) -> dict[str, Any]:
+             process_cb=None, dry_run: bool = False, timeout: int = 24 * 3600, rebuild: bool = False,
+             config_revision: str | None = None) -> dict[str, Any]:
     profiles.load_profile(profile_id)
     if fast_mode:
         stop_year, stop_period = min(stop_year or 2025, 2025), -1
@@ -172,33 +179,38 @@ def run_gcam(profile_id: str, build: dict[str, Any] | None = None,
     try:
         if build is None:
             build = r_build.latest_build(profile_id)
-        if rebuild or build is None or r_build.build_is_stale(profile_id, build):
-            log("输入与现有构建不一致，生成本次 XML…")
-            build = r_build.run_build(profile_id, log_fn=log_fn, process_cb=process_cb)
+        needs_build = rebuild or build is None or r_build.build_is_stale(profile_id, build)
+        if dry_run and needs_build:
+            build = {"xml_dir": str(PATHS.baseline_xml), "reused_baseline": True}
+            log("仅检查配置，未运行 R。当前预览使用基线 XML 和 Profile 覆盖文件，正式运行时将按输入生成或选择 XML。")
+        elif needs_build:
+            log("正在准备本次运行的 XML…")
+            build = r_build.run_build(profile_id, log_fn=log_fn, process_cb=process_cb, force_from_data=rebuild)
         meta.update(build_id=build.get("build_id", ""), xml_dir=build["xml_dir"],
                     input_signature=build.get("input_signature"), stage="configure")
         _save_manifest(run_dir, meta)
         config_path = generate_config(profile_id, build, run_dir, scenario_name, stop_year,
-                                      stop_period, max_parallelism, fast_mode)
+                                      stop_period, max_parallelism, fast_mode, config_revision=config_revision, log_fn=log)
         meta["config"] = str(config_path)
         log(f"生成配置：{config_path}")
         log(f"XML 来源：{build['xml_dir']}（{'基线' if build.get('reused_baseline') else 'CSV 构建'}）")
-        if fast_mode:
+        tree = etree.parse(str(config_path))
+        info = scenario_config.summary(tree)
+        meta.update(scenario_name=info["scenario_name"], inputs=info)
+        log(f"生效的社会经济输入：{', '.join(info['socioeconomics']) or '自定义'}；政策组件：{', '.join(info['policies']) or '无'}。")
+        meta["input_warnings"] = scenario_config.validate_inputs(tree, info, fast_mode=fast_mode)
+        for warning in meta["input_warnings"]:
+            log(f"输入提示：{warning}")
+        if info["find_path"]:
+            meta["validation_only"] = False
+        if info["find_path"]:
+            log(f"已启用政策目标搜索，目标文件：{info['target_file']}")
+        if meta["validation_only"]:
             log("快速验证：保留标准求解精度，计算至 2025 年或更早。正式情景请关闭快速验证。")
         if dry_run:
             meta["status"] = "dry-run"
             return meta
         require_file(PATHS.gcam_exe, "gcam.exe")
-        tree = etree.parse(str(config_path))
-        inputs = tree.findall("./ScenarioComponents/Value") + tree.findall("./Files/Value[@name='xmlInputFileName']")
-        target_file = tree.findtext("./Files/Value[@name='policy-target-file']", "").strip()
-        enabled = {node.get("name") for node in tree.findall("./Bools/Value") if (node.text or "").strip().lower() in {"1", "true"}}
-        if "find-path" in enabled and "BatchMode" not in enabled:
-            if not target_file or not Path(target_file).is_file():
-                raise RuntimeError(f"已启用政策目标搜索（find-path），但找不到政策目标文件：{target_file or '未设置'}。请检查当前 Profile 的模型配置。")
-            log(f"已启用政策目标搜索，目标文件：{target_file}")
-        for node in inputs:
-            require_file((node.text or "").strip(), f"模型输入 {node.get('name', '')}")
         (run_dir / "restart").mkdir(exist_ok=True)
         log_config = _prepare_logs(run_dir)
         cmd = [str(alias_path(PATHS.gcam_exe)), "-C", str(alias_path(config_path)), "-L", str(alias_path(log_config))]
@@ -246,8 +258,12 @@ def run_gcam(profile_id: str, build: dict[str, Any] | None = None,
             code = run_streaming(cmd, cwd=alias_path(PATHS.exe_dir), env=env_for_tools(SETTINGS),
                                  log_path=log_path, log_fn=on_line, process_cb=process_cb, timeout=timeout)
         meta["exit_code"] = code
+        report = run_dir / "logs/target_finder_log.txt"
+        if info["find_path"] and not meta.get("target_error") and report.is_file():
+            status = re.findall(r"Target finding for all years completed with status (\d+)", report.read_text(encoding="utf-8", errors="replace"))
+            if status and status[-1] == "0":
+                meta["target_error"] = "目标搜索日志确认本次未达标。"
         if meta.get("target_error"):
-            report = run_dir / "logs/target_finder_log.txt"
             raise RuntimeError(f"政策目标搜索失败（退出码 {code}）：{meta['target_error']}"
                                f"诊断日志：{report if report.is_file() else log_path}。")
         if meta["failed_periods"]:
@@ -263,7 +279,7 @@ def run_gcam(profile_id: str, build: dict[str, Any] | None = None,
         if meta["calibration_warnings"]:
             raise RuntimeError(f"历史期校准检查未通过：{meta['calibration_warnings']}；请检查 CSV 数据和单位。")
         meta.update(status="success", stage="complete")
-        log(f"{'快速验证通过' if fast_mode else 'GCAM 运行成功'}，数据库：{database}")
+        log(f"{'快速验证通过' if meta['validation_only'] else 'GCAM 运行成功'}，数据库：{database}")
         return meta
     except Exception as exc:
         cancelled = isinstance(exc, JobCancelled) or bool(getattr(getattr(process_cb, "__self__", None), "cancel_requested", False))

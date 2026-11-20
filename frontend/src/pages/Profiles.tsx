@@ -34,11 +34,13 @@ export default function Profiles() {
     setBusy(true)
     try {
       const p = await apiPost<Profile>('/api/profiles', v)
-      message.success('Profile 已创建')
+      message.success(p.config_repairs ? `Profile 已创建，配置副本已修正 ${p.config_repairs} 处 XML 拼写` : 'Profile 已创建')
       setOpen(false)
       form.resetFields()
       await reload()
       setActiveId(p.id)
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || '创建 Profile 失败')
     } finally {
       setBusy(false)
     }
@@ -53,9 +55,16 @@ export default function Profiles() {
   const importZip = async (file: File) => {
     const fd = new FormData()
     fd.append('file', file)
-    await fetch('/api/profiles/import', { method: 'POST', body: fd })
-    message.success('Profile 已导入')
-    await reload()
+    try {
+      const response = await fetch('/api/profiles/import', { method: 'POST', body: fd })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.detail || '导入失败')
+      await reload()
+      setActiveId(result.data.id)
+      message.success('已导入并选中 Profile')
+    } catch (e: any) {
+      message.error(e.message || 'Profile 导入失败')
+    }
   }
 
   const clone = async () => {

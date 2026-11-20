@@ -128,6 +128,7 @@ def _run_build(
     process_cb: Callable[[subprocess.Popen], None] | None = None,
     timeout: int = 4 * 3600,
     _build_id: str | None = None,
+    force_from_data: bool = False,
 ) -> dict[str, Any]:
     profile = profiles.load_profile(profile_id)
     build_id = _build_id or now_id()
@@ -135,19 +136,25 @@ def _run_build(
     xml_dir = build_dir / "xml"
     out_dir = build_dir / "outputs"
     build_dir.mkdir(parents=True, exist_ok=True)
-    signature = input_signature(profile_id)
+    source_signature = baseline_data_signature()
+    signature = input_signature(profile_id, source_signature)
+    previous = latest_build(profile_id)
+    source_changed = bool(previous and previous.get('model_root', str(PATHS.root)) == str(PATHS.root)
+                          and previous.get('baseline_data_signature') not in (None, source_signature))
 
     def log(msg: str) -> None:
         if log_fn:
             log_fn(msg)
 
     # Fast path: no CSV changes -> reuse the baseline XML tree
-    if not has_data_overlay(profile_id):
+    if not force_from_data and not source_changed and not has_data_overlay(profile_id):
         manifest = {
             "build_id": build_id,
             "profile_id": profile_id,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "reused_baseline": True,
+            "baseline_data_signature": source_signature,
+            "model_root": str(PATHS.root),
             "xml_dir": str(PATHS.baseline_xml),
             "status": "success",
             "message": "没有修改任何 CSV，直接复用基线 XML",
@@ -204,6 +211,8 @@ def _run_build(
         "profile_id": profile_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "reused_baseline": False,
+        "baseline_data_signature": source_signature,
+        "model_root": str(PATHS.root),
         "xml_dir": str(xml_dir),
         "xml_count": len(xml_files),
         "deduped": deduped,
@@ -217,7 +226,7 @@ def _run_build(
     return manifest
 
 
-def run_build(profile_id: str, log_fn=None, process_cb=None, timeout: int = 4 * 3600) -> dict[str, Any]:
+def run_build(profile_id: str, log_fn=None, process_cb=None, timeout: int = 4 * 3600, *, force_from_data: bool = False) -> dict[str, Any]:
     build_id = now_id()
     directory = profiles.profile_dir(profile_id) / "builds" / build_id
     directory.mkdir(parents=True, exist_ok=True)
@@ -227,7 +236,7 @@ def run_build(profile_id: str, log_fn=None, process_cb=None, timeout: int = 4 * 
     target = directory / "manifest.json"
     target.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
     try:
-        return _run_build(profile_id, log_fn, process_cb, timeout, _build_id=build_id)
+        return _run_build(profile_id, log_fn, process_cb, timeout, _build_id=build_id, force_from_data=force_from_data)
     except Exception as exc:
         cancelled = bool(getattr(getattr(process_cb, "__self__", None), "cancel_requested", False))
         manifest.update(status="cancelled" if cancelled else "failed", error=str(exc),
@@ -236,14 +245,23 @@ def run_build(profile_id: str, log_fn=None, process_cb=None, timeout: int = 4 * 
         raise
 
 
-def input_signature(profile_id: str) -> str:
+def baseline_data_signature() -> str:
+    inputs = []
+    for path in sorted(PATHS.extdata.rglob("*")):
+        if path.suffix.lower() in (".csv", ".gz", ".xlsx") and path.is_file():
+            stat = path.stat()
+            inputs.append((path.relative_to(PATHS.extdata).as_posix(), stat.st_size, stat.st_mtime_ns))
+    return hashlib.sha256(json.dumps(inputs, ensure_ascii=True).encode()).hexdigest()
+
+
+def input_signature(profile_id: str, source_signature: str | None = None) -> str:
     """Content identity includes deletions, restored files and the selected model."""
     root = profiles.overlay_root(profile_id) / "gcamdata"
     overlays = [(p.relative_to(root).as_posix(), csv_engine.file_sha256(p))
                 for p in sorted(root.rglob("*")) if p.is_file()] if root.is_dir() else []
     baseline = [(p.name, p.stat().st_size, p.stat().st_mtime_ns)
                 for p in sorted(PATHS.baseline_xml.glob("*.xml"))]
-    raw = json.dumps([str(PATHS.root.resolve()), overlays, baseline], ensure_ascii=True)
+    raw = json.dumps([str(PATHS.root.resolve()), overlays, baseline, source_signature or baseline_data_signature()], ensure_ascii=True)
     return hashlib.sha256(raw.encode()).hexdigest()
 
 

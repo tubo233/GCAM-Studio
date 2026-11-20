@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections import defaultdict, deque
+from copy import deepcopy
 import io
 import json
 import shutil
@@ -18,7 +20,7 @@ from .hostnet import HostPathError, is_local_client, list_directory, list_drives
 from .db import connect, get_row, list_rows, utcnow
 from .services import catalog as catalog_svc
 from .services import files as files_svc
-from .services import gcam_run, jobs, profiles, queries, r_build
+from .services import gcam_run, jobs, profiles, queries, r_build, scenario_config
 from .services.data_migrate import DataMigrateError, migrate_data_dir, same_data_dir
 from .services.processes import JobCancelled
 from .services.diagnostics import tool_checks
@@ -209,7 +211,6 @@ def api_delete_profile(pid: str) -> dict[str, Any]:
 @app.post("/api/profiles/{pid}/clone")
 def api_clone_profile(pid: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
     _require_profile(pid)
-    _require_idle_profile(pid)
     return _ok(profiles.clone_profile(pid, body.get("name") or "副本"))
 
 
@@ -246,11 +247,10 @@ async def api_import_profile(file: UploadFile = File(...)) -> dict[str, Any]:
             raise HTTPException(400, "不是有效的 Profile 压缩包（缺少 profile.json）")
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
         name = meta.get("name", "导入的 Profile") + " (导入)"
-        new = profiles.create_profile(name, meta.get("base_config", "configuration_china.xml"), meta.get("description", ""))
-        root = profiles.profile_dir(new["id"])
         cfg = Path(td) / "config.xml"
-        if cfg.is_file():
-            shutil.copy2(cfg, root / "config.xml")
+        new = profiles.create_profile(name, meta.get("base_config", "configuration_china.xml"), meta.get("description", ""),
+                                      config_bytes=cfg.read_bytes() if cfg.is_file() else None)
+        root = profiles.profile_dir(new["id"])
         ov = Path(td) / "overlay"
         if ov.is_dir():
             shutil.copytree(ov, root / "overlay", dirs_exist_ok=True)
@@ -315,7 +315,8 @@ def api_catalog_files(
 @app.get("/api/catalog/xml")
 def api_catalog_xml(kind: str = "", category: str = "", search: str = "", profile_id: str = "") -> dict[str, Any]:
     cat = catalog_svc.build_catalog()
-    items = list(cat["xml"])
+    items = [x for x in cat["xml"] if x["kind"] != "policy"]
+    items.extend(catalog_svc.scan_xml_dir(PATHS.policy_dir, "policy", (x for x in cat["xml"] if x["kind"] == "policy")))
     if profile_id:
         _require_profile(profile_id)
         known = {item["id"] for item in items}
@@ -460,16 +461,8 @@ def api_xml_save(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
         raise HTTPException(400, f"XML 格式有误，未保存：{exc}") from exc
     ov = profiles.overlay_path(pid, body["kind"], body["path"])
     ov.parent.mkdir(parents=True, exist_ok=True)
-    ov.write_text(body["text"], encoding="utf-8")
-    # validate well-formedness
-    try:
-        etree.fromstring(body["text"].encode("utf-8"))
-        valid = True
-        error = ""
-    except Exception as exc:
-        valid = False
-        error = str(exc)
-    return _ok({"valid": valid, "error": error, "path": str(ov)})
+    scenario_config.write_config(ov, body["text"].encode("utf-8"))
+    return _ok({"valid": True, "error": "", "path": str(ov)})
 
 
 @app.post("/api/xml/validate")
@@ -481,12 +474,35 @@ def api_xml_validate(body: dict[str, Any] = Body(...)) -> dict[str, Any]:
         return _ok({"valid": False, "error": str(exc)})
 
 
+@app.put("/api/profiles/{pid}/config/import")
+async def api_import_config(pid: str, file: UploadFile = File(...)) -> dict[str, Any]:
+    _require_profile(pid)
+    raw, repairs = scenario_config.imported_config(await file.read())
+    raw, rebased = scenario_config.portable_import(raw, PATHS.root)
+    _require_idle_profile(pid)
+    scenario_config.write_config(profiles.profile_dir(pid) / "config.xml", raw)
+    return _ok({"config_repairs": repairs, "rebased_inputs": rebased})
+
+
+@app.post("/api/profiles/{pid}/config/template-components")
+def api_template_components(pid: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    _require_profile(pid)
+    return _ok(scenario_config.apply_template(PATHS.exe_dir, body["template"], body["components"]))
+
+
+@app.get("/api/profiles/{pid}/run-inputs")
+def api_run_inputs(pid: str) -> dict[str, Any]:
+    _require_profile(pid)
+    raw = (profiles.profile_dir(pid) / "config.xml").read_bytes()
+    return _ok({**scenario_config.summary(scenario_config.parse_config(raw)), "revision": scenario_config.revision(raw)})
+
+
 @app.get("/api/profiles/{pid}/config")
 def api_get_config(pid: str) -> dict[str, Any]:
     _require_profile(pid)
     p = profiles.profile_dir(pid) / "config.xml"
-    tree = etree.parse(str(p))
-    root = tree.getroot()
+    raw = p.read_bytes()
+    root = scenario_config.parse_config(raw)
     out: dict[str, Any] = {"files": [], "components": [], "strings": [], "bools": [], "ints": [], "doubles": []}
     for v in root.findall("./Files/Value"):
         out["files"].append({"name": v.get("name", ""), "value": v.text or "", "write_output": v.get("write-output", ""), "append_scenario_name": v.get("append-scenario-name", "")})
@@ -495,6 +511,8 @@ def api_get_config(pid: str) -> dict[str, Any]:
     for tag, key in (("Strings", "strings"), ("Bools", "bools"), ("Ints", "ints"), ("Doubles", "doubles")):
         for v in root.findall(f"./{tag}/Value"):
             out[key].append({"name": v.get("name", ""), "value": v.text or ""})
+    out.update(inputs=scenario_config.summary(root), revision=scenario_config.revision(raw),
+               templates=sorted(p.name for p in PATHS.exe_dir.glob("configuration*.xml")))
     return _ok(out)
 
 
@@ -503,24 +521,44 @@ def api_put_config(pid: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]
     _require_profile(pid)
     _require_idle_profile(pid)
     p = profiles.profile_dir(pid) / "config.xml"
-    tree = etree.parse(str(p))
-    root = tree.getroot()
-    for v in root.findall("./Files/Value"):
-        name = v.get("name", "")
-        for item in body.get("files", []):
-            if item.get("name") == name:
-                v.text = item.get("value", "")
-                if "write_output" in item:
-                    v.set("write-output", str(item["write_output"]))
-                if "append_scenario_name" in item:
-                    v.set("append-scenario-name", str(item["append_scenario_name"]))
+    raw = p.read_bytes()
+    if body.get("revision") and body["revision"] != scenario_config.revision(raw):
+        raise HTTPException(409, "此配置已更新，请重新加载后再保存。")
+    root = scenario_config.parse_config(raw)
+    file_group = root.find("Files")
+    for item in body.get("files", []):
+        if file_group is None:
+            file_group = etree.SubElement(root, "Files")
+        node = next((el for el in file_group.findall("Value") if el.get("name") == item["name"]), None)
+        if node is None:
+            node = etree.SubElement(file_group, "Value", name=item["name"])
+        node.text = item["value"]
+        for key, attr in (("write_output", "write-output"), ("append_scenario_name", "append-scenario-name")):
+            if key in item:
+                if item[key] != "":
+                    node.set(attr, str(item[key]))
+                else:
+                    node.attrib.pop(attr, None)
     comps = root.find("./ScenarioComponents")
+    if comps is None and body.get("components"):
+        comps = etree.SubElement(root, "ScenarioComponents")
     if comps is not None and "components" in body:
-        for child in list(comps):
-            comps.remove(child)
+        existing = comps.findall("Value")
+        by_path = defaultdict(deque)
+        for el in existing:
+            by_path[el.text or ""].append(el)
+        ordered = []
         for item in body["components"]:
-            el = etree.SubElement(comps, "Value", name=item.get("name", ""))
-            el.text = item.get("value", "")
+            value = item.get("value", "")
+            el = deepcopy(by_path[value].popleft()) if by_path[value] else etree.Element("Value")
+            el.set("name", item.get("name", ""))
+            el.text = value
+            ordered.append(el)
+        for old, new in zip(existing, ordered):
+            comps.replace(old, new)
+        for old in existing[len(ordered):]:
+            comps.remove(old)
+        comps.extend(ordered[len(existing):])
     for tag, key in (("Strings", "strings"), ("Bools", "bools"), ("Ints", "ints"), ("Doubles", "doubles")):
         parent = root.find(f"./{tag}")
         if parent is None:
@@ -530,8 +568,14 @@ def api_put_config(pid: str, body: dict[str, Any] = Body(...)) -> dict[str, Any]
                 if v.get("name") == item.get("name"):
                     v.text = str(item.get("value", ""))
                     break
-    tree.write(str(p), encoding="UTF-8", xml_declaration=True, pretty_print=True)
-    return _ok({"path": str(p)})
+            else:
+                etree.SubElement(parent, "Value", name=item["name"]).text = str(item.get("value", ""))
+    saved = etree.tostring(root.getroottree(), encoding="UTF-8", xml_declaration=True, pretty_print=True)
+    try:
+        scenario_config.write_config(p, saved, expected_revision=scenario_config.revision(raw))
+    except scenario_config.ConfigChanged as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return _ok({"path": str(p), "revision": scenario_config.revision(saved)})
 
 
 # --------------------------------------------------------------------------- builds / runs
@@ -564,7 +608,7 @@ def api_start_build(pid: str, body: dict[str, Any] = Body(default={})) -> dict[s
     def fn(job: jobs.Job) -> Any:
         job.log(f"开始生成 XML：{pid}")
         job.check_cancelled()
-        return r_build.run_build(pid, log_fn=job.log, process_cb=job.register_process)
+        return r_build.run_build(pid, log_fn=job.log, process_cb=job.register_process, force_from_data=True)
 
     job = jobs.MANAGER.submit("build", f"生成 XML · {pid}", fn, profile_id=pid)
     return _ok(job.to_dict())
@@ -592,7 +636,7 @@ def api_start_run(pid: str, body: dict[str, Any] = Body(default={})) -> dict[str
         return gcam_run.run_gcam(
             pid,
             build=build,
-            scenario_name=body.get("scenario_name") or "Reference",
+            scenario_name=body.get("scenario_name") or None,
             stop_year=body.get("stop_year"),
             stop_period=body.get("stop_period"),
             max_parallelism=body.get("max_parallelism"),
@@ -600,6 +644,7 @@ def api_start_run(pid: str, body: dict[str, Any] = Body(default={})) -> dict[str
             log_fn=job.log,
             process_cb=job.register_process,
             dry_run=bool(body.get("dry_run")),
+            config_revision=body.get("config_revision"),
             rebuild=bool(body.get("rebuild")),
         )
 

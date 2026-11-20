@@ -60,6 +60,29 @@ def build_catalog(force: bool = False) -> dict[str, Any]:
     return data
 
 
+def scan_xml_dir(base: Path, kind: str, cached=()) -> list[dict[str, Any]]:
+    known = {item["path"]: item for item in cached}
+    items = []
+    for path in sorted(base.glob("*.xml")):
+        stat = path.stat()
+        old = known.get(path.name)
+        if old and old.get("mtime") == stat.st_mtime and old.get("size") == stat.st_size:
+            items.append(old)
+            continue
+        scenario = ""
+        try:
+            with path.open("rb") as stream:
+                _, root = next(etree.iterparse(stream, events=("start",), huge_tree=True))
+                if root.tag == "scenario":
+                    scenario = root.get("name", "")
+        except (OSError, etree.XMLSyntaxError, StopIteration):
+            pass
+        items.append({"id": f"{kind}:{path.name}", "kind": kind, "path": path.name, "name": path.stem,
+                      "category": classify_xml(path.name, kind), "scenario_name": scenario,
+                      "size": stat.st_size, "mtime": stat.st_mtime})
+    return items
+
+
 def scan_catalog() -> dict[str, Any]:
     files: list[dict[str, Any]] = []
     extdata = PATHS.extdata
@@ -109,34 +132,8 @@ def scan_catalog() -> dict[str, Any]:
                 item.update({"title": p.stem, "units": "", "columns": [], "rows": 0, "error": str(exc)})
         files.append(item)
 
-    xmls: list[dict[str, Any]] = []
-    for base, kind in ((PATHS.baseline_xml, "xml"), (PATHS.policy_dir, "policy"), (PATHS.extra_dir, "extra")):
-        if not base.is_dir():
-            continue
-        for p in sorted(base.glob("*.xml")):
-            scenario = ""
-            try:
-                for _, elem in etree.iterparse(str(p), events=("start",), huge_tree=True):
-                    if elem.tag == "scenario":
-                        scenario = elem.get("name", "")
-                        break
-                    elem.clear()
-            except Exception:
-                pass
-            rel = p.name if kind in ("xml", "policy", "extra") else p.relative_to(base).as_posix()
-            xmls.append(
-                {
-                    "id": f"{kind}:{rel}",
-                    "kind": kind,
-                    "path": rel,
-                    "name": p.stem,
-                    "category": classify_xml(p.name, kind),
-                    "scenario_name": scenario,
-                    "size": p.stat().st_size,
-                    "mtime": p.stat().st_mtime,
-                }
-            )
-
+    xmls = [item for base, kind in ((PATHS.baseline_xml, "xml"), (PATHS.policy_dir, "policy"), (PATHS.extra_dir, "extra"))
+            for item in scan_xml_dir(base, kind)]
     queries = scan_queries()
     modules = []
     for m in MODULE_ORDER:

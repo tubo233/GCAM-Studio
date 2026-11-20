@@ -1,7 +1,10 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Card, Form, Input, Modal, Select, Space, Table, Tabs, Tag, Typography, message } from 'antd'
 import { DeleteOutlined, PlusOutlined, SaveOutlined } from '@ant-design/icons'
-import { apiGet, apiPut } from '../api'
+import { apiGet, apiPost, apiPut, http } from '../api'
+import { useNavigate } from 'react-router-dom'
+import ScenarioSettings from './ScenarioSettings'
+import DataFiles from './DataFiles'
 import { useProfiles } from '../context/ProfileContext'
 import type { XmlItem } from '../types'
 
@@ -9,6 +12,15 @@ const { Title, Text } = Typography
 
 export default function ConfigEditor() {
   const { activeId } = useProfiles()
+  if (!activeId) return <Alert type="warning" showIcon message="请先选择一个参数环境（Profile）" />
+  return <ProfileConfig key={activeId} activeId={activeId} />
+}
+
+function ProfileConfig({ activeId }: { activeId: string }) {
+  const navigate = useNavigate()
+  const { active, setActiveId, reload } = useProfiles()
+  const fileRef = useRef<HTMLInputElement>(null)
+  const [error, setError] = useState('')
   const [config, setConfig] = useState<any>(null)
   const [xmls, setXmls] = useState<XmlItem[]>([])
   const [open, setOpen] = useState(false)
@@ -22,24 +34,66 @@ export default function ConfigEditor() {
     const [c, x] = await Promise.all([apiGet<any>(`/api/profiles/${activeId}/config`), apiGet<XmlItem[]>('/api/catalog/xml', { profile_id: activeId })])
     setConfig(c)
     setXmls(x)
+    setError('')
   }
 
-  useEffect(() => { load() }, [activeId])
+  useEffect(() => { load().catch(e => setError(e.response?.data?.detail || '配置加载失败')) }, [activeId])
+
+  const importConfig = (file?: File) => {
+    if (!file) return
+    Modal.confirm({
+      title: '导入手工主配置', content: `用 ${file.name} 替换当前 Profile 的主配置及页面内未保存的编辑？`,
+      okText: '导入', cancelText: '取消',
+      async onOk() {
+        const body = new FormData()
+        body.append('file', file)
+        try {
+          const r = await http.put(`/api/profiles/${activeId}/config/import`, body)
+          await load()
+          const count = r.data.data.config_repairs
+          message.success(['已导入主配置', count && `修正 ${count} 处 XML 拼写`, r.data.data.rebased_inputs && `已匹配 ${r.data.data.rebased_inputs} 个本机输入文件`].filter(Boolean).join('，'))
+        } catch (e: any) {
+          message.error(e.response?.data?.detail || '导入失败')
+          throw e
+        }
+      },
+    })
+  }
 
   const options = useMemo(
     () => xmls.filter((x) => x.kind === addKind).map((x) => ({ value: x.path, label: `${x.name}  (${x.category})` })),
     [xmls, addKind],
   )
 
-  const save = async () => {
+  const save = async (goToRuns = false) => {
     if (!activeId || !config) return
     setSaving(true)
     try {
-      await apiPut(`/api/profiles/${activeId}/config`, config)
+      const saved = await apiPut(`/api/profiles/${activeId}/config`, config)
+      setConfig((c: any) => ({...c, revision: saved.revision}))
       message.success('配置已保存到当前 Profile')
+      if (goToRuns) navigate('/runs')
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || '保存失败')
     } finally {
       setSaving(false)
     }
+  }
+
+  const saveCopy = async () => {
+    if (!config) return
+    const name = window.prompt('新情景名称', `${active?.name || activeId} 副本`)?.trim()
+    if (!name) return
+    setSaving(true)
+    try {
+      const copy = await apiPost(`/api/profiles/${activeId}/clone`, {name})
+      await apiPut(`/api/profiles/${copy.id}/config`, config)
+      await reload()
+      setActiveId(copy.id)
+      message.success('已切换到新情景，可继续编辑')
+    } catch (e: any) {
+      message.error(e.response?.data?.detail || '另存为失败')
+    } finally { setSaving(false) }
   }
 
   const addComponent = () => {
@@ -60,22 +114,28 @@ export default function ConfigEditor() {
     setConfig({ ...config, components: comps })
   }
 
-  if (!activeId) return <Alert type="warning" showIcon message="请先选择一个参数环境（Profile）" />
-
   return (
     <div>
       <Title level={3} className="page-title">模型配置</Title>
-      <p className="page-sub">直接编辑当前 Profile 的 configuration.xml：情景组件、输入输出文件、字符串/布尔/整数开关。</p>
+      <p className="page-sub">当前 Profile 使用独立的 config.xml。要采用手工修改的主配置，请导入对应文件。</p>
 
       <Card
-        extra={<Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={save}>保存配置</Button>}
-        title="configuration.xml"
+        extra={<Space><input type="file" accept=".xml" hidden ref={fileRef} onChange={e => { importConfig(e.target.files?.[0]); e.target.value = '' }} />
+          <Button onClick={() => fileRef.current?.click()}>导入手工主配置</Button>
+          <Button disabled={!config} loading={saving} onClick={saveCopy}>另存为情景</Button>
+          <Button type="primary" icon={<SaveOutlined />} disabled={!config} loading={saving} onClick={() => save()}>保存配置</Button>
+          <Button disabled={!config} loading={saving} onClick={() => save(true)}>保存并到运行中心</Button></Space>}
+        title="Profile 主配置"
       >
         {!config ? (
-          <Alert type="info" showIcon message="加载中…" />
+          <Alert type={error ? "error" : "info"} showIcon message={error || "加载中…"} />
         ) : (
           <Tabs
             items={[
+              { key: 'scenario', label: '情景与政策', children: <ScenarioSettings id={activeId} config={config} setConfig={setConfig} xmls={xmls} refreshPolicies={async () => {
+                setXmls(await apiGet<XmlItem[]>('/api/catalog/xml', {profile_id:activeId}))
+              }}/>  },
+              { key: 'data', label: '输入数据 CSV', children: <DataFiles /> },
               {
                 key: 'components',
                 label: `情景组件 (${config.components.length})`,
@@ -97,11 +157,16 @@ export default function ConfigEditor() {
                         },
                         {
                           title: '文件', dataIndex: 'value',
-                          render: (v) => <span className="muted" style={{ fontSize: 12 }}>{v}</span>,
+                          render: (v, _, i) => <Input size="small" value={v} onChange={e => updateComponent(i, 'value', e.target.value)}/>,
                         },
                         {
-                          title: '操作', width: 80,
-                          render: (_, __, i) => <Button size="small" danger icon={<DeleteOutlined />} onClick={() => setConfig({ ...config, components: config.components.filter((_: any, j: number) => j !== i) })} />,
+                          title: '顺序', width: 150,
+                          render: (_, __, i) => <Space size={2}>{[-1,1].map(step => <Button key={step} size="small" disabled={i+step < 0 || i+step >= config.components.length} onClick={() => {
+                            const rows = [...config.components]
+                            rows.splice(i+step, 0, rows.splice(i, 1)[0])
+                            setConfig({...config,components:rows})
+                          }}>{step < 0 ? '上移' : '下移'}</Button>)}
+                          <Button size="small" danger icon={<DeleteOutlined />} onClick={() => setConfig({ ...config, components: config.components.filter((_: any, j: number) => j !== i) })} /></Space>,
                         },
                       ]}
                     />
