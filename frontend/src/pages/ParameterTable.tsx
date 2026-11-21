@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Alert, Button, Card, Input, Modal, Select, Space, Table, Tabs, Tag, message } from 'antd'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Alert, Button, Card, Input, Modal, Select, Space, Table, Tabs, Tag, Tooltip, message } from 'antd'
+import { useSearchParams } from 'react-router-dom'
 import { apiGet, apiPut } from '../api'
 import { useProfiles } from '../context/ProfileContext'
 import InputChanges, {
@@ -32,18 +32,20 @@ type Row = {
   unit?: string
   [k: string]: any
 }
+const regionLabel = (r?: string) => (r === 'SC' ? '四川 (SC)' : r === 'CQ' ? '重庆 (CQ)' : r)
+
 export function ParameterGrid({
   pid,
   group = '',
   initialSource = '',
   initialQuery = '',
-  links = false,
+  onExpandFull,
 }: {
   pid: string
   group?: string
   initialSource?: string
   initialQuery?: string
-  links?: boolean
+  onExpandFull?: (params: { source: string; query: string; group: string }) => void
 }) {
   const [sources, setSources] = useState<string[]>([])
   const [source, setSource] = useState(initialSource)
@@ -60,12 +62,24 @@ export function ParameterGrid({
   const [matches, setMatches] = useState<string[]>([])
   const [scanning, setScanning] = useState('')
   const [scanError, setScanError] = useState('')
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    setOffset(0)
+    setScanning('')
+    setMatches([])
+    setScanError('')
+    return () => {
       ++scanId.current
-    },
-    [pid, group],
-  )
+    }
+  }, [pid, group])
+  useEffect(() => {
+    setSource(initialSource)
+    setOffset(0)
+  }, [initialSource])
+  useEffect(() => {
+    setQuery(initialQuery)
+    setDraft(initialQuery)
+    setOffset(0)
+  }, [initialQuery])
   const across = async () => {
     const id = ++scanId.current
     setMatches([])
@@ -194,16 +208,14 @@ export function ParameterGrid({
           allowClear
           style={{ width: 270 }}
         />
-        {!links && (
-          <Button disabled={!draft.trim()} onClick={across}>
-            跨文件查找
-          </Button>
-        )}
+        <Button disabled={!draft.trim()} onClick={across}>
+          跨文件查找
+        </Button>
         {source && <Button onClick={raw}>查看源 XML</Button>}
-        {links && (
-          <Link to={'/parameter-table?' + new URLSearchParams({ source, query, group }).toString()}>
-            在统一参数表打开
-          </Link>
+        {onExpandFull && (
+          <Button type="link" onClick={() => onExpandFull({ source, query, group })}>
+            在 ③ 参数与数据中展开完整视图 →
+          </Button>
         )}
       </Space>
       {scanning && (
@@ -241,7 +253,7 @@ export function ParameterGrid({
         columns={[
           {
             title: '地区 / 市场',
-            render: (_, r) => [r.region, r.market && `市场 ${r.market}`].filter(Boolean).join(' · ') || '—',
+            render: (_, r) => [regionLabel(r.region), r.market && `市场 ${r.market}`].filter(Boolean).join(' · ') || '—',
           },
           {
             title: '部门 / 技术 / 政策',
@@ -252,9 +264,18 @@ export function ParameterGrid({
           {
             title: '当前值',
             render: (_, r) => (
-              <>
-                {r.value} {r.unit || ''} {r.specified && <Tag>已指定</Tag>}
-              </>
+              <Space size={4} wrap>
+                <span>
+                  {r.value} {r.unit || ''}
+                </span>
+                {r.specified && (
+                  <Tooltip title={`原值：${r.original ?? '—'}`}>
+                    <Tag color="orange" style={{ marginInlineEnd: 0 }}>
+                      已指定
+                    </Tag>
+                  </Tooltip>
+                )}
+              </Space>
             ),
           },
           {

@@ -3,12 +3,23 @@ import { Alert, Button, Card, Input, Select, Space, Table, Tag, Typography, mess
 import { CheckCircleOutlined, ReloadOutlined, SaveOutlined, SearchOutlined } from '@ant-design/icons'
 import Editor from '@monaco-editor/react'
 import { apiGet, apiPut, apiPost } from '../api'
+import { changed } from '../components/InputChanges'
 import { useProfiles } from '../context/ProfileContext'
 import type { XmlItem } from '../types'
 
 const { Title, Text } = Typography
 
-export default function XmlBrowser({ kindFilter, pageTitle, pageSub }: { kindFilter?: string; pageTitle?: string; pageSub?: string }) {
+export default function XmlBrowser({
+  kindFilter,
+  pageTitle,
+  pageSub,
+  embedded = false,
+}: {
+  kindFilter?: string
+  pageTitle?: string
+  pageSub?: string
+  embedded?: boolean
+}) {
   const { activeId } = useProfiles()
   const [items, setItems] = useState<XmlItem[]>([])
   const [selected, setSelected] = useState<XmlItem | null>(null)
@@ -75,6 +86,7 @@ export default function XmlBrowser({ kindFilter, pageTitle, pageSub }: { kindFil
       if (r.valid) message.success('已保存并写入 Profile 覆盖层')
       else message.warning('已保存，但 XML 格式有误：' + r.error)
       setDirty(false)
+      changed()
     } finally {
       setSaving(false)
     }
@@ -88,13 +100,17 @@ export default function XmlBrowser({ kindFilter, pageTitle, pageSub }: { kindFil
 
   return (
     <div>
-      <Title level={3} className="page-title">{pageTitle || '情景组件 XML'}</Title>
-      <p className="page-sub">{pageSub || '304 个 gcamdata 情景组件 + 57 个政策 + 5 个额外组件；修改后存入当前 Profile。'}</p>
+      {!embedded && (
+        <>
+          <Title level={3} className="page-title">{pageTitle || '情景组件 XML'}</Title>
+          <p className="page-sub">{pageSub || '304 个 gcamdata 情景组件 + 57 个政策 + 5 个额外组件；修改后存入当前 Profile。'}</p>
+        </>
+      )}
 
       {!activeId && <Alert type="warning" showIcon message="请先在顶部选择一个参数环境（Profile）" style={{ marginBottom: 16 }} />}
 
       <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
-        <Card style={{ width: 420, flex: '0 0 420px' }} bodyStyle={{ padding: 12 }}>
+        <Card style={{ width: 340, flex: '0 0 340px' }} styles={{ body: { padding: 12 } }}>
           <Space style={{ marginBottom: 10 }} wrap>
             <Input
               prefix={<SearchOutlined />}
@@ -141,7 +157,22 @@ export default function XmlBrowser({ kindFilter, pageTitle, pageSub }: { kindFil
 
         <div style={{ flex: 1, minWidth: 0 }}>
           <Card
-            title={selected ? <Space><Text strong>{selected.name}</Text><Tag>{selected.category}</Tag>{selected.scenario_name && <Tag color="blue">scenario: {selected.scenario_name}</Tag>}</Space> : '选择 XML'}
+            styles={{ header: { flexWrap: 'wrap', gap: 8 } }}
+            title={
+              selected ? (
+                <Space wrap size={6}>
+                  <Text strong>{selected.name}</Text>
+                  <Tag style={{ marginInlineEnd: 0 }}>{selected.category}</Tag>
+                  {selected.scenario_name && (
+                    <Tag color="blue" style={{ marginInlineEnd: 0 }}>
+                      scenario: {selected.scenario_name}
+                    </Tag>
+                  )}
+                </Space>
+              ) : (
+                '选择 XML'
+              )
+            }
             extra={
               <Space>
                 <Button icon={<CheckCircleOutlined />} onClick={validate} disabled={tooLarge || !text}>校验</Button>

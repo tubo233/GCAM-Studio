@@ -3,10 +3,25 @@ import { Tag } from 'antd'
 
 const statusNames: Record<string, string> = { queued: '排队中', running: '运行中', success: '已完成', failed: '失败', cancelled: '已取消' }
 
-export default function LogConsole({ jobId, height = 360 }: { jobId?: string; height?: number }) {
+export default function LogConsole({
+  jobId,
+  height = 360,
+  onStatusChange,
+}: {
+  jobId?: string
+  height?: number
+  onStatusChange?: (status: string) => void
+}) {
   const [lines, setLines] = useState<string[]>([])
   const [status, setStatus] = useState('')
   const boxRef = useRef<HTMLPreElement>(null)
+  const onStatusRef = useRef(onStatusChange)
+  onStatusRef.current = onStatusChange
+
+  const updateStatus = (next: string) => {
+    setStatus(next)
+    if (next) onStatusRef.current?.(next)
+  }
 
   useEffect(() => {
     setLines([])
@@ -15,7 +30,11 @@ export default function LogConsole({ jobId, height = 360 }: { jobId?: string; he
     const es = new EventSource(`/api/jobs/${jobId}/events`)
     const controller = new AbortController()
     let checking = false
-    const stop = () => { controller.abort(); es.close(); clearInterval(poll) }
+    const stop = () => {
+      controller.abort()
+      es.close()
+      clearInterval(poll)
+    }
     let latestId = -1
     es.onmessage = (e) => {
       try {
@@ -25,18 +44,18 @@ export default function LogConsole({ jobId, height = 360 }: { jobId?: string; he
           latestId = id
           setLines((prev) => [...prev, d.line].slice(-12000))
         }
-        if (d.status) setStatus(d.status)
+        if (d.status) updateStatus(d.status)
       } catch {}
     }
     es.addEventListener('done', (e: any) => {
       try {
         const d = JSON.parse(e.data)
-        setStatus(d.status)
+        updateStatus(d.status)
       } catch {}
       stop()
     })
     es.onerror = () => {
-      setStatus((prev) => ['success', 'failed', 'cancelled'].includes(prev) ? prev : '重新连接日志…')
+      setStatus((prev) => (['success', 'failed', 'cancelled'].includes(prev) ? prev : '重新连接日志…'))
     }
     const poll = setInterval(async () => {
       if (checking) return
@@ -59,12 +78,15 @@ export default function LogConsole({ jobId, height = 360 }: { jobId?: string; he
           const { data: final } = await history.json()
           if (controller.signal.aborted) return
           setLines((final.logs || []).slice(-12000))
-          setStatus(data.status)
+          updateStatus(data.status)
           stop()
         } else if (es.readyState === EventSource.OPEN) {
-          setStatus(data.status)
+          updateStatus(data.status)
         }
-      } catch {} finally { checking = false }
+      } catch {
+      } finally {
+        checking = false
+      }
     }, 5000)
     return stop
   }, [jobId])
@@ -76,7 +98,10 @@ export default function LogConsole({ jobId, height = 360 }: { jobId?: string; he
   return (
     <div>
       <div style={{ marginBottom: 8 }}>
-        状态：<Tag color={status === 'success' ? 'green' : status === 'failed' ? 'red' : 'blue'}>{statusNames[status] || status || '等待中'}</Tag>
+        状态：
+        <Tag color={status === 'success' ? 'green' : status === 'failed' ? 'red' : 'blue'}>
+          {statusNames[status] || status || '等待中'}
+        </Tag>
       </div>
       <pre ref={boxRef} className="code-box" style={{ height }}>
         {lines.length ? lines.join('\n') : '等待日志…'}

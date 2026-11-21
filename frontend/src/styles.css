@@ -1,11 +1,15 @@
 body {
   margin: 0;
-  background: #f5f7fa;
+  background: #f4f6f9;
 }
 
 .ant-layout-sider-children {
   display: flex;
   flex-direction: column;
+}
+
+.ant-card {
+  border-color: #e6ebf2;
 }
 
 .page-title {
@@ -15,7 +19,7 @@ body {
 }
 
 .page-sub {
-  color: #7a8699;
+  color: #64748b;
   margin: 0 0 16px;
   font-size: 13px;
 }
@@ -31,7 +35,7 @@ body {
 }
 
 .stat-label {
-  color: #7a8699;
+  color: #64748b;
   font-size: 12px;
   margin-top: 6px;
 }
@@ -50,15 +54,17 @@ body {
 }
 
 .split-list {
-  height: calc(100vh - 190px);
+  height: calc(100vh - 280px);
+  min-height: 360px;
   overflow: auto;
-  border-right: 1px solid #eee;
+  border-right: 1px solid #eef2f6;
 }
 
 .file-row {
   padding: 8px 10px;
   border-radius: 6px;
   cursor: pointer;
+  transition: background 0.15s ease;
 }
 
 .file-row:hover {
@@ -71,7 +77,7 @@ body {
 }
 
 .muted {
-  color: #8c8c8c;
+  color: #64748b;
   font-size: 12px;
 }
 
@@ -83,4 +89,195 @@ body {
 .editable-cell:hover {
   background: #fffbe6;
   outline: 1px dashed #d9ad3c;
+}
+
+/* 5-step workflow chrome */
+.workflow-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #ffffff;
+  border: 1px solid #e6ebf2;
+  border-radius: 10px;
+  padding: 8px 12px;
+  margin-bottom: 16px;
+  overflow-x: auto;
+}
+
+.workflow-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  background: transparent;
+  transition: all 0.16s ease;
+  white-space: nowrap;
+  flex-shrink: 0;
+  color: #475569;
+  font-size: 13px;
+}
+
+.workflow-step:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.workflow-step.active {
+  background: #eff6ff;
+  border-color: #93c5fd;
+  color: #1d4ed8;
+  font-weight: 600;
+}
+
+.workflow-step.done {
+  color: #15803d;
+}
+
+.workflow-step.done .step-badge {
+  background: #dcfce7;
+  color: #15803d;
+  border-color: #86efac;
+}
+
+.workflow-step.active .step-badge {
+  background: #1668dc;
+  color: #ffffff;
+  border-color: #1668dc;
+}
+
+.workflow-arrow {
+  color: #cbd5e1;
+  font-size: 12px;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.step-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid #cbd5e1;
+  flex-shrink: 0;
+}
+
+.step-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.step-header-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.step-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  background: #ffffff;
+  border: 1px solid #e6ebf2;
+  border-radius: 10px;
+  padding: 12px 18px;
+  margin-top: 20px;
+}
+
+/* Dashboard flow cards */
+.flow-card {
+  height: 100%;
+  border-radius: 10px;
+  border: 1px solid #e6ebf2;
+  background: #ffffff;
+  padding: 14px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.flow-card:hover {
+  border-color: #93c5fd;
+  box-shadow: 0 4px 12px rgba(22, 104, 220, 0.08);
+  transform: translateY(-1px);
+}
+
+.dropzone-hint {
+  border: 1px dashed #cbd5e1;
+  border-radius: 8px;
+  background: #f8fafc;
+  padding: 10px 14px;
+  color: #64748b;
+  font-size: 12px;
+  text-align: center;
+  margin-bottom: 12px;
+}
+
+.change-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 8px 14px;
+  background: #ffffff;
+  border: 1px solid #e6ebf2;
+  border-radius: 8px;
+  margin: 10px 0 14px;
+}
+
+.profile-row-active > td {
+  background: #f0f7ff !important;
+}
+
+/* Run mode 3-in-1 cards */
+.run-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.run-mode-card {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: #ffffff;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.run-mode-card:hover:not(.disabled) {
+  border-color: #93c5fd;
+  background: #f8fbff;
+}
+
+.run-mode-card.active {
+  border-color: #1668dc;
+  background: #eff6ff;
+  box-shadow: 0 0 0 1px #1668dc inset;
+}
+
+.run-mode-card.disabled {
+  opacity: 0.58;
+  cursor: not-allowed;
+  background: #f8fafc;
 }

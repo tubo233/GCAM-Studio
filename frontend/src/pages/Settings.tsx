@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react'
 import { Alert, Button, Card, Form, Input, InputNumber, Modal, Space, Spin, Table, Tag, Typography, message } from 'antd'
 import { FolderOpenOutlined, ReloadOutlined, SaveOutlined } from '@ant-design/icons'
+import { useNavigate } from 'react-router-dom'
 import { apiGet, apiPost, apiPut } from '../api'
+import { StepHeader } from '../components/WorkflowChrome'
 
-const { Title, Text } = Typography
+const { Text } = Typography
 
 type DirEntry = { name: string; path: string }
 type BrowseMode = 'folder' | 'file'
@@ -166,6 +168,7 @@ function PathBrowser({
 }
 
 export default function Settings() {
+  const nav = useNavigate()
   const [form] = Form.useForm()
   const [health, setHealth] = useState<any>(null)
   const [settings, setSettings] = useState<any>(null)
@@ -226,12 +229,15 @@ export default function Settings() {
 
   return (
     <div>
-      <Title level={3} className="page-title">设置与诊断</Title>
-      <p className="page-sub">
-        {canEdit
-          ? 'JDK、R 和 GCAM 路径保存在这台电脑上。同事通过局域网可以改情景参数并运行，但不能改这些路径。'
-          : '模型在主机上运行。你可以修改情景参数并查看结果。'}
-      </p>
+      <StepHeader
+        title="环境设置与诊断"
+        description={
+          canEdit
+            ? 'JDK、R 和 GCAM 路径保存在这台电脑上。同事通过局域网可以改情景参数并运行，但不能改这些路径。'
+            : '模型在主机上运行。你可以修改情景参数并查看结果。'
+        }
+        extra={<Button onClick={() => nav('/')}>返回工作台总览</Button>}
+      />
 
       {!canEdit && health && (
         <Alert

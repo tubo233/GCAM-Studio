@@ -35,6 +35,9 @@ export function ProfileProvider({ children }: { children: React.ReactNode }) {
         const id = list[0].id
         setActiveIdState(id)
         localStorage.setItem(KEY, id)
+      } else if (!list.length) {
+        setActiveIdState('')
+        localStorage.removeItem(KEY)
       }
     } finally {
       setLoading(false)

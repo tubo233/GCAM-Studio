@@ -1,26 +1,56 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { Alert, Button, Card, Empty, Select, Space, Table, Tag, Typography, message } from 'antd'
+import { Alert, Button, Card, Empty, Select, Space, Table, Typography, message } from 'antd'
 import { BarChartOutlined, ReloadOutlined } from '@ant-design/icons'
 import ReactECharts from 'echarts-for-react'
 import { apiGet } from '../api'
+import { useProfiles } from '../context/ProfileContext'
+import type { RunInfo } from '../types'
 
 const { Title, Text } = Typography
 
-export default function Compare() {
+export default function Compare({
+  embedded = false,
+  initialSelected,
+}: {
+  embedded?: boolean
+  initialSelected?: string[]
+} = {}) {
+  const { profiles } = useProfiles()
   const [results, setResults] = useState<any[]>([])
-  const [selected, setSelected] = useState<string[]>([])
+  const [runs, setRuns] = useState<RunInfo[]>([])
+  const [selected, setSelected] = useState<string[]>(initialSelected || [])
   const [groupBy, setGroupBy] = useState('total')
   const [section, setSection] = useState('')
   const [sections, setSections] = useState<string[]>([])
   const [rows, setRows] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
 
+  useEffect(() => {
+    if (!initialSelected?.length) return
+    setSelected((prev) => Array.from(new Set([...prev, ...initialSelected])))
+  }, [initialSelected])
+
   const load = async () => {
-    const list = await apiGet<any[]>('/api/results')
+    const [list, runList] = await Promise.all([apiGet<any[]>('/api/results'), apiGet<RunInfo[]>('/api/runs')])
     setResults(list)
+    setRuns(runList)
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+  }, [])
+
+  const runMap = useMemo(() => {
+    const m = new Map<string, RunInfo>()
+    runs.forEach((r) => m.set(r.run_id, r))
+    return m
+  }, [runs])
+
+  const profileNameMap = useMemo(() => {
+    const m = new Map<string, string>()
+    profiles.forEach((p) => m.set(p.id, p.name))
+    return m
+  }, [profiles])
 
   const runCompare = async (sec = section, gb = groupBy) => {
     if (selected.length < 2) return message.warning('请至少选择两个结果')
@@ -70,21 +100,47 @@ export default function Compare() {
 
   return (
     <div>
-      <Title level={3} className="page-title">跨运行对比</Title>
-      <p className="page-sub">选择两次或多次运行的查询结果，按年份对齐比较。建议选择同名查询（同一 section），否则单位可能不同。</p>
+      {!embedded && (
+        <>
+          <Title level={3} className="page-title">跨运行对比</Title>
+          <p className="page-sub">选择两次或多次运行的查询结果，按年份对齐比较。建议选择同名查询（同一 section），否则单位可能不同。</p>
+        </>
+      )}
 
-      <Card title="选择结果" extra={<Button icon={<ReloadOutlined />} onClick={load}>刷新</Button>} style={{ marginBottom: 16 }}>
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginBottom: 16 }}
+        message="三步完成对比：1. 在下表勾选至少 2 份同类型查询结果 → 2. 选择聚合方式与查询 Section → 3. 点击“生成对比”查看年度折线图与明细数据。"
+      />
+
+      <Card
+        title={`选择结果（已选 ${selected.length} 份）`}
+        extra={<Button icon={<ReloadOutlined />} onClick={load}>刷新</Button>}
+        style={{ marginBottom: 16 }}
+      >
         <Table
           size="small"
           rowKey="id"
           dataSource={results}
-          pagination={false}
+          pagination={{ pageSize: 8, showSizeChanger: false }}
+          locale={{ emptyText: '尚无已查询结果，请先在“单次运行查询与分析”标签页运行查询' }}
           rowSelection={{ selectedRowKeys: selected, onChange: (keys) => setSelected(keys as string[]) }}
           columns={[
-            { title: '名称', dataIndex: 'name' },
-            { title: 'Run', dataIndex: 'run_id', width: 200 },
-            { title: '行数', dataIndex: 'rows', width: 100 },
-            { title: '创建时间', dataIndex: 'created_at', render: (v) => String(v || '').replace('T', ' ').slice(0, 19) },
+            { title: '结果名称', dataIndex: 'name' },
+            {
+              title: '所属情景（Profile）',
+              render: (_, r) => {
+                const run = runMap.get(r.run_id)
+                return run ? profileNameMap.get(run.profile_id) || run.profile_id : '—'
+              },
+            },
+            {
+              title: '场景名',
+              render: (_, r) => runMap.get(r.run_id)?.scenario_name || r.run_id || '—',
+            },
+            { title: '行数', dataIndex: 'rows', width: 90 },
+            { title: '创建时间', dataIndex: 'created_at', width: 170, render: (v) => String(v || '').replace('T', ' ').slice(0, 19) },
           ]}
         />
         <Space style={{ marginTop: 12 }} wrap>
@@ -92,18 +148,26 @@ export default function Compare() {
           <Select
             style={{ width: 180 }}
             value={groupBy}
-            onChange={(v) => { setGroupBy(v); runCompare(section, v) }}
+            onChange={(v) => {
+              setGroupBy(v)
+              if (selected.length >= 2) runCompare(section, v)
+            }}
             options={[{ value: 'total', label: '全部合计' }, { value: 'region', label: '按区域' }, { value: 'sector', label: '按部门/燃料' }]}
           />
-          <Text strong>查询 section：</Text>
+          <Text strong>查询 Section：</Text>
           <Select
             style={{ width: 360 }}
             value={section || undefined}
-            placeholder="选择查询"
-            onChange={(v) => { setSection(v); runCompare(v, groupBy) }}
+            placeholder="生成对比后可选或切换查询"
+            onChange={(v) => {
+              setSection(v)
+              if (selected.length >= 2) runCompare(v, groupBy)
+            }}
             options={sections.map((s) => ({ value: s, label: s }))}
           />
-          <Button type="primary" icon={<BarChartOutlined />} loading={loading} onClick={() => runCompare()}>生成对比</Button>
+          <Button type="primary" icon={<BarChartOutlined />} loading={loading} onClick={() => runCompare()}>
+            生成对比
+          </Button>
         </Space>
       </Card>
 

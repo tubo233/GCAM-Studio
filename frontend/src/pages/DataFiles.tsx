@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Alert, Button, Card, Descriptions, Drawer, Empty, Input, InputNumber, List, Modal, Radio, Select, Space, Table, Tag, Tooltip, Typography, message,
+  Alert, Button, Card, Descriptions, Drawer, Dropdown, Empty, Input, InputNumber, List, Modal, Radio, Select, Space, Table, Tag, Tooltip, Typography, message,
 } from 'antd'
-import { DownloadOutlined, EditOutlined, ReloadOutlined, SearchOutlined, UndoOutlined, UploadOutlined } from '@ant-design/icons'
+import { DiffOutlined, DownOutlined, DownloadOutlined, EditOutlined, ReloadOutlined, SearchOutlined, UndoOutlined } from '@ant-design/icons'
 import { changed } from '../components/InputChanges'
 import { apiGet, apiPatch, apiPost, fmtSize } from '../api'
 import { useProfiles } from '../context/ProfileContext'
@@ -43,7 +43,23 @@ function EditableCell({ value, onSave, disabled }: { value: string; onSave: (v: 
   )
 }
 
-export default function DataFiles({ chinaInput }: {chinaInput?: string} = {}) {
+export default function DataFiles({
+  chinaInput,
+  embedded = false,
+  initialModule,
+  initialFile,
+  initialSearch,
+  logicalModules,
+  patternFilter,
+}: {
+  chinaInput?: string
+  embedded?: boolean
+  initialModule?: string
+  initialFile?: string
+  initialSearch?: string
+  logicalModules?: string[]
+  patternFilter?: string[]
+} = {}) {
   const ssp = chinaInput?.match(/^socioeconomics_CHINA_(SSP[1-5])\.xml$/i)?.[1].toUpperCase()
   const shortcuts = ssp ? [
     [`${ssp} 人口和 GDP 路径`, 'socioeconomics/SSP/SSP_database_2024.csv.gz'], ['省级人口增速', 'gcam-china/Population_Growth_Rates.csv'],
@@ -51,14 +67,14 @@ export default function DataFiles({ chinaInput }: {chinaInput?: string} = {}) {
     ['省级人口增速', 'gcam-china/Population_Growth_Rates.csv'], ['全国人口增速（SSP2 列）', 'gcam-china/SSPS_Population.csv'],
     ['全国 GDP 增速（SSP2 列）', 'gcam-china/SSPS_GDP.csv'],
   ] : []
-  const { activeId, active } = useProfiles()
-  const initialParams = new URLSearchParams(window.location.search)
-  const initialModule = initialParams.get('module') || ''
-  const initialFile = initialParams.get('file') || ''
-  const initialSearch = initialParams.get('search') || ''
+  const { activeId } = useProfiles()
+  const urlParams = new URLSearchParams(window.location.search)
+  const resolvedInitModule = initialModule !== undefined ? initialModule : (urlParams.get('module') || '')
+  const resolvedInitFile = initialFile !== undefined ? initialFile : (urlParams.get('file') || '')
+  const resolvedInitSearch = initialSearch !== undefined ? initialSearch : (urlParams.get('search') || '')
   const [files, setFiles] = useState<CatalogFile[]>([])
-  const [module, setModule] = useState(initialModule)
-  const [search, setSearch] = useState(initialSearch)
+  const [module, setModule] = useState(resolvedInitModule)
+  const [search, setSearch] = useState(resolvedInitSearch)
   const [selected, setSelected] = useState<CatalogFile | null>(null)
   const [info, setInfo] = useState<FileInfo | null>(null)
   const [rows, setRows] = useState<string[][]>([])
@@ -90,13 +106,12 @@ export default function DataFiles({ chinaInput }: {chinaInput?: string} = {}) {
   loadedRef.current = loaded
   const ready = !!loaded && loaded.key === contextKey && !loading
 
-
   const loadFiles = async () => {
     const list = await apiGet<CatalogFile[]>('/api/catalog/files')
     setFiles(list)
     if (!selected && list.length) {
       setSelected(
-        (initialFile ? list.find((f) => f.path === initialFile) : undefined) ||
+        (resolvedInitFile ? list.find((f) => f.path === resolvedInitFile) : undefined) ||
           list.find((f) => f.path === (shortcuts[0]?.[1] || 'gcam-china/Population_Growth_Rates.csv')) ||
           list.find((f) => f.module === 'gcam-china' && f.rows > 0) ||
           list.find((f) => f.rows > 0) ||
@@ -106,6 +121,20 @@ export default function DataFiles({ chinaInput }: {chinaInput?: string} = {}) {
   }
 
   useEffect(() => { loadFiles() }, [])
+
+  useEffect(() => {
+    if (initialModule !== undefined) setModule(initialModule)
+  }, [initialModule])
+
+  useEffect(() => {
+    if (initialSearch !== undefined) setSearch(initialSearch)
+  }, [initialSearch])
+
+  useEffect(() => {
+    if (!initialFile || !files.length || writingRef.current) return
+    const target = files.find((f) => f.path === initialFile)
+    if (target) setSelected(target)
+  }, [initialFile, files])
 
   const modules = useMemo(() => {
     const m = new Map<string, { label: string; count: number }>()
@@ -119,13 +148,20 @@ export default function DataFiles({ chinaInput }: {chinaInput?: string} = {}) {
 
   const filtered = useMemo(() => {
     let list = files
+    if (logicalModules && logicalModules.length) {
+      list = list.filter((f) => logicalModules.includes(f.module))
+    }
+    if (patternFilter && patternFilter.length) {
+      const patterns = patternFilter.map((p) => p.toLowerCase())
+      list = list.filter((f) => patterns.some((p) => f.path.toLowerCase().includes(p)))
+    }
     if (module) list = list.filter((f) => f.module === module)
     if (search.trim()) {
       const s = search.toLowerCase()
       list = list.filter((f) => f.path.toLowerCase().includes(s) || (f.title || '').toLowerCase().includes(s) || (f.columns || []).some((c) => c.toLowerCase().includes(s)))
     }
     return list
-  }, [files, module, search])
+  }, [files, logicalModules, patternFilter, module, search])
 
   // A table is one immutable identity: profile, file and page. Never mix responses.
   useEffect(() => {
@@ -262,24 +298,42 @@ export default function DataFiles({ chinaInput }: {chinaInput?: string} = {}) {
     }))
   }, [info, rows, rowIds, loaded, ready, writing, contextKey, saveCell, yearColumn])
 
-  const dataSource = rows.map((r, i) => ({ key: rowIds[i] ?? i, ...Object.fromEntries(info?.columns.map((c, j) => [c, r[j]] ) || []) }))
+  const dataSource = rows.map((r, i) => ({ key: rowIds[i] ?? i, ...Object.fromEntries(info?.columns.map((c, j) => [c, r[j]]) || []) }))
 
   return (
     <div>
-      <Title level={3} className="page-title">数据文件</Title>
-      <p className="page-sub">全部 1,123 个 gcamdata 输入文件；双击单元格编辑，改动只写入当前 Profile 的覆盖层。</p>
+      {!embedded && (
+        <>
+          <Title level={3} className="page-title">数据文件</Title>
+          <p className="page-sub">全部 1,123 个 gcamdata 输入文件；双击单元格编辑，改动只写入当前 Profile 的覆盖层。</p>
+        </>
+      )}
 
       {!activeId && <Alert type="warning" showIcon message="请先在顶部选择一个参数环境（Profile）" style={{ marginBottom: 16 }} />}
 
-      {!!shortcuts.length && <Space wrap style={{marginBottom:12}}>
-        <Text>本情景常用输入</Text>
-        {[...shortcuts, ['省级能源平衡', 'gcam-china/en_balance_Mtce_Yh_province.csv']].map(([label, name]) => {
-          const target = files.find(f => f.path === name)
-          return target && <Button key={name} size="small" title={name} disabled={writing} onClick={() => {
-            setModule(target.module); setSearch(target.name); setSelected(target)
-          }}>{label}</Button>
-        })}
-      </Space>}
+      {!!shortcuts.length && (
+        <Space wrap style={{ marginBottom: 12 }}>
+          <Text>本情景常用输入</Text>
+          {[...shortcuts, ['省级能源平衡', 'gcam-china/en_balance_Mtce_Yh_province.csv']].map(([label, name]) => {
+            const target = files.find(f => f.path === name)
+            return target && (
+              <Button
+                key={name}
+                size="small"
+                title={name}
+                disabled={writing}
+                onClick={() => {
+                  setModule(target.module)
+                  setSearch(target.name)
+                  if (!writingRef.current) setSelected(target)
+                }}
+              >
+                {label}
+              </Button>
+            )
+          })}
+        </Space>
+      )}
       <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start' }}>
         <Card style={{ width: 340, flex: '0 0 340px' }} styles={{ body: { padding: 12 } }}>
           <Input
@@ -328,10 +382,41 @@ export default function DataFiles({ chinaInput }: {chinaInput?: string} = {}) {
               title={<Space><Text strong>{selected.name}</Text><Tag>{selected.module_label}</Tag>{info?.is_overlay && <Tag color="orange">已修改</Tag>}</Space>}
               extra={
                 <Space>
-                  <Button icon={<ReloadOutlined />} disabled={writing || loading} onClick={() => loadPage(page, pageSize)}>刷新</Button>
-                  <Button icon={<DownloadOutlined />} href={`/api/files/export?profile_id=${activeId}&kind=data&path=${encodeURIComponent(selected.path)}`}>导出</Button>
                   <Button icon={<EditOutlined />} onClick={() => { setBulkCol(info?.columns[0] || ''); setBulkOpen(true) }} disabled={!ready || writing || selected.file_type === 'xlsx'}>批量修改</Button>
                   <Button icon={<UndoOutlined />} onClick={revert} disabled={!ready || writing || !info?.is_overlay}>恢复基线</Button>
+                  <Dropdown
+                    menu={{
+                      items: [
+                        {
+                          key: 'diff',
+                          icon: <DiffOutlined />,
+                          label: '查看与基线差异',
+                          disabled: !ready || writing || !info?.diff_count,
+                          onClick: openDiff,
+                        },
+                        {
+                          key: 'reload',
+                          icon: <ReloadOutlined />,
+                          label: '刷新当前页',
+                          disabled: writing || loading,
+                          onClick: () => loadPage(page, pageSize),
+                        },
+                        {
+                          key: 'export',
+                          icon: <DownloadOutlined />,
+                          label: (
+                            <a href={`/api/files/export?profile_id=${activeId}&kind=data&path=${encodeURIComponent(selected.path)}`}>
+                              下载当前 CSV
+                            </a>
+                          ),
+                        },
+                      ],
+                    }}
+                  >
+                    <Button>
+                      更多操作 <DownOutlined />
+                    </Button>
+                  </Dropdown>
                 </Space>
               }
             >
@@ -353,12 +438,28 @@ export default function DataFiles({ chinaInput }: {chinaInput?: string} = {}) {
                   ) : (
                     <>
                       <Space wrap style={{ marginBottom: 8 }}>
-                        <Input.Search aria-label="筛选数据行" placeholder="搜地区、部门等行内容" style={{width:230}}
-                          allowClear disabled={writing} value={searchDraft} onChange={e => setSearchDraft(e.target.value)}
-                          onSearch={value => { setPage(1); setRowSearch(value.trim()) }}/>
-                        {!!info.year_columns.length && <Select aria-label="显示年份" style={{width:150}} allowClear showSearch
-                          placeholder="显示全部年份" value={yearColumn} onChange={setYearColumn}
-                          options={info.year_columns.map(value => ({value,label:value}))}/>}
+                        <Input.Search
+                          aria-label="筛选数据行"
+                          placeholder="搜地区、部门等行内容"
+                          style={{ width: 230 }}
+                          allowClear
+                          disabled={writing}
+                          value={searchDraft}
+                          onChange={e => setSearchDraft(e.target.value)}
+                          onSearch={value => { setPage(1); setRowSearch(value.trim()) }}
+                        />
+                        {!!info.year_columns.length && (
+                          <Select
+                            aria-label="显示年份"
+                            style={{ width: 150 }}
+                            allowClear
+                            showSearch
+                            placeholder="显示全部年份"
+                            value={yearColumn}
+                            onChange={setYearColumn}
+                            options={info.year_columns.map(value => ({ value, label: value }))}
+                          />
+                        )}
                         <Text type="secondary">双击单元格编辑</Text>
                         {dirty > 0 && <Tag color="green">本次会话已保存 {dirty} 次</Tag>}
                       </Space>
@@ -392,7 +493,7 @@ export default function DataFiles({ chinaInput }: {chinaInput?: string} = {}) {
       <Drawer title="与基线差异" open={diffOpen} onClose={() => setDiffOpen(false)} width={720}>
         <Table
           size="small"
-          rowKey={(r, i) => String(i)}
+          rowKey={(_, i) => String(i)}
           dataSource={diff}
           columns={[
             { title: '行', dataIndex: 'row', width: 60 },
